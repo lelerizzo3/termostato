@@ -1,0 +1,189 @@
+# Specifiche di sistema — Termostato intelligente
+
+## 1. Descrizione generale
+
+Il sistema gestisce un termostato domestico con programmazione settimanale. Legge periodicamente la temperatura ambiente e decide se attivare o disattivare la caldaia in base alla programmazione oraria configurata o a un'impostazione manuale di override.
+
+---
+
+## 2. Calendario settimanale
+
+### 2.1 Struttura
+
+Il calendario è configurato tramite un file JSON e contiene esattamente **7 nodi**, uno per ogni giorno della settimana (lunedì–domenica).
+
+### 2.2 Nodo giornaliero
+
+Ogni nodo rappresenta un giorno e contiene un elenco di **intervalli di tempo**. Il numero di intervalli per giorno è variabile (da 0 a N).
+
+### 2.3 Intervallo di tempo
+
+Ogni intervallo specifica:
+
+- **ora di inizio** — orario in cui l'intervallo diventa attivo
+- **ora di fine** — orario in cui l'intervallo termina
+- **temperatura target** — temperatura desiderata in gradi Celsius, con una cifra decimale (es. `20.5`)
+
+### 2.4 Comportamento in assenza di intervalli
+
+Se per il momento corrente non è definito nessun intervallo attivo nel calendario, la **caldaia rimane spenta**. Non viene applicata alcuna logica di isteresi: l'assenza di programmazione equivale esplicitamente a "nessun riscaldamento richiesto".
+
+### 2.5 Esempio concettuale di struttura JSON
+
+```
+Settimana
+├── Lunedì
+│   ├── Intervallo 1: 06:00–08:00 → 20.5°C
+│   ├── Intervallo 2: 12:00–14:00 → 19.0°C
+│   └── Intervallo 3: 18:00–23:00 → 21.0°C
+├── Martedì
+│   └── ...
+└── ...
+```
+
+---
+
+## 3. Configurazione del sistema
+
+La configurazione del sistema è separata dal calendario e contiene i seguenti parametri.
+
+### 3.1 Soglia di attivazione caldaia (`soglia_attivazione`)
+
+Valore numerico in gradi Celsius che rappresenta il **margine di tolleranza** sotto la temperatura target oltre il quale la caldaia viene accesa.
+
+- Valori tipici: `0.2`, `0.3` (o altro valore analogo configurabile)
+- Logica: se `temperatura_ambiente < temperatura_target - soglia_attivazione` → caldaia ON
+- Logica: se `temperatura_ambiente >= temperatura_target` → caldaia OFF
+
+Questo meccanismo evita accensioni e spegnimenti troppo frequenti (effetto isteresi).
+
+### 3.2 Override manuale
+
+| Parametro | Tipo | Descrizione |
+|---|---|---|
+| `override_attivo` | booleano | Se `true`, il calendario settimanale viene ignorato |
+| `temperatura_override` | decimale | Temperatura target da mantenere quando l'override è attivo |
+
+Quando `override_attivo` è `true`, il sistema ignora completamente il calendario e utilizza `temperatura_override` come unico riferimento, applicando comunque la soglia di attivazione.
+
+### 3.3 Frequenza di polling (`intervallo_polling_secondi`)
+
+Valore intero positivo che indica ogni quanti secondi il sistema esegue il ciclo di controllo: lettura della temperatura ambiente, calcolo della temperatura target e decisione sullo stato della caldaia.
+
+- Unità: secondi
+- Valore di esempio: `60`
+- Il valore deve essere maggiore di zero; in caso di valore assente o non valido il sistema usa un default ragionevole (es. `60` secondi).
+
+---
+
+## 4. Integrazioni esterne
+
+Il sistema non legge direttamente sensori hardware né comanda direttamente il relay della caldaia. Tutte le interazioni con il mondo fisico avvengono tramite **API REST esterne**. Il sistema espone due client REST dedicati, uno per ciascuna operazione.
+
+### 4.1 Client lettura temperatura
+
+La temperatura ambiente viene acquisita tramite una chiamata a un'API REST esposta da un dispositivo esterno (es. sensore smart, microcontrollore con endpoint HTTP).
+
+- Il client viene invocato ad ogni ciclo di polling
+- Restituisce il valore di temperatura corrente in gradi Celsius
+- L'endpoint di destinazione è configurabile
+
+### 4.2 Client controllo relay caldaia
+
+L'accensione e lo spegnimento della caldaia avvengono tramite una chiamata a un'API REST che comanda il relay del dispositivo di controllo (es. relay smart, microcontrollore con endpoint HTTP).
+
+- Il client viene invocato quando il sistema decide di cambiare lo stato della caldaia
+- Invia il comando di accensione o spegnimento al relay
+- L'endpoint di destinazione è configurabile
+
+### 4.3 Comportamento in caso di errore delle API
+
+In caso di mancata risposta o errore da parte delle API esterne (timeout, errore HTTP, dati non validi), il comportamento del sistema (mantenere lo stato attuale, spegnere la caldaia per sicurezza, loggare l'errore, ecc.) è da definire in fase di progettazione.
+
+---
+
+## 5. Database e log
+
+### 5.1 Scopo
+
+Ad ogni ciclo di polling il sistema registra su database uno snapshot dello stato del termostato. Questi dati consentono di tracciare l'andamento della temperatura e il comportamento della caldaia nel tempo.
+
+### 5.2 Struttura del record di log
+
+| Campo | Tipo | Obbligatorio | Descrizione |
+|---|---|---|---|
+| `data_ora` | timestamp | sì | Data e ora esatta del ciclo di polling |
+| `caldaia_accesa` | booleano | sì | `true` se la caldaia era accesa al momento del rilevamento |
+| `temperatura_rilevata` | decimale | sì | Temperatura ambiente letta tramite API, in °C con una cifra decimale |
+| `temperatura_target` | decimale | sì | Temperatura target calcolata (da calendario o override) |
+| `override_attivo` | booleano | sì | `true` se in quel momento era attivo l'override manuale |
+| `temperatura_override` | decimale | no | Temperatura di override impostata; valorizzato solo se `override_attivo = true` |
+
+### 5.3 Frequenza di scrittura
+
+Un record viene scritto **ad ogni ciclo di polling**, indipendentemente dal fatto che lo stato della caldaia sia cambiato o meno.
+
+### 5.4 Conservazione dei dati
+
+La politica di retention dei log (quanti giorni/record conservare) è da definire in fase di progettazione.
+
+---
+
+## 6. Logica di controllo
+
+### 6.1 Sorgente della temperatura target
+
+1. Se `override_attivo = true` → usa `temperatura_override`
+2. Altrimenti → cerca l'intervallo attivo nel calendario per il giorno e l'ora correnti
+3. Se nessun intervallo è attivo → **caldaia spenta** (nessuna temperatura target)
+
+### 6.2 Decisione di accensione caldaia
+
+| Condizione | Stato caldaia |
+|---|---|
+| `temperatura_ambiente < temperatura_target - soglia_attivazione` | ON |
+| `temperatura_ambiente >= temperatura_target` | OFF |
+| Tra i due valori (zona neutra) | invariato (mantiene stato precedente) |
+
+---
+
+## 7. Requisiti funzionali
+
+| ID | Requisito |
+|---|---|
+| RF-01 | Il sistema legge la configurazione del calendario da file JSON |
+| RF-02 | Il calendario contiene esattamente 7 nodi, uno per giorno della settimana |
+| RF-03 | Ogni giorno può avere un numero variabile di intervalli orari |
+| RF-04 | Ogni intervallo definisce ora di inizio, ora di fine e temperatura target con una cifra decimale |
+| RF-05 | Il sistema legge la soglia di attivazione dalla configurazione |
+| RF-06 | Il sistema supporta la modalità override tramite i parametri `override_attivo` e `temperatura_override` |
+| RF-07 | Quando l'override è attivo, il calendario viene ignorato |
+| RF-08 | La caldaia viene accesa quando la temperatura ambiente scende sotto `temperatura_target - soglia_attivazione` |
+| RF-09 | La caldaia viene spenta quando la temperatura ambiente raggiunge `temperatura_target` |
+| RF-10 | In assenza di intervallo attivo nel calendario (e senza override), la caldaia rimane spenta |
+| RF-11 | La frequenza del ciclo di controllo è configurabile tramite il parametro `intervallo_polling_secondi` |
+| RF-12 | La temperatura ambiente viene letta tramite un client REST dedicato |
+| RF-13 | L'accensione e lo spegnimento della caldaia avvengono tramite un client REST dedicato che comanda il relay |
+| RF-14 | Gli endpoint delle API esterne sono configurabili |
+| RF-15 | Ad ogni ciclo di polling il sistema scrive un record di log su database |
+| RF-16 | Il record di log contiene: `data_ora`, `caldaia_accesa`, `temperatura_rilevata`, `temperatura_target`, `override_attivo` e, se l'override è attivo, `temperatura_override` |
+
+---
+
+## 8. Requisiti non funzionali
+
+| ID | Requisito |
+|---|---|
+| RNF-01 | La configurazione deve essere modificabile senza riavviare il sistema |
+| RNF-02 | Le temperature sono espresse in gradi Celsius con una cifra decimale |
+| RNF-03 | Il sistema deve essere robusto in caso di configurazione mancante o malformata |
+| RNF-04 | Il sistema deve gestire in modo controllato gli errori di comunicazione con le API esterne |
+
+---
+
+## 9. Aspetti aperti (da definire)
+
+- Comportamento in caso di errore delle API esterne (timeout, errore HTTP): mantenere stato attuale o spegnere la caldaia per sicurezza
+- Persistenza dello stato della caldaia tra i riavvii
+- Gestione del cambio ora legale/solare
+- Politica di retention dei log (quanti giorni/record conservare prima di eliminare i dati storici)
