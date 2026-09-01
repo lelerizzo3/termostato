@@ -140,7 +140,19 @@ Ad ogni ciclo di polling il sistema registra su database uno snapshot dello stat
 
 Un record viene scritto **ad ogni ciclo di polling**, indipendentemente dal fatto che lo stato della caldaia sia cambiato o meno.
 
-### 5.4 Conservazione dei dati
+### 5.4 Tabella log errori
+
+In aggiunta alla tabella di log principale, il sistema mantiene una tabella dedicata ai soli eventi di errore. Un record viene scritto ogni volta che si verifica un errore di comunicazione con le API esterne.
+
+| Campo | Tipo | Obbligatorio | Descrizione |
+|---|---|---|---|
+| `data_ora` | timestamp | sì | Data e ora in cui si è verificato l'errore |
+| `tipo_errore` | stringa | sì | Descrizione del tipo di errore (es. "Impossibile leggere la temperatura", "Impossibile inviare comando di accensione caldaia", "Impossibile inviare comando di spegnimento caldaia") |
+| `caldaia_accesa` | booleano | no | Stato della caldaia al momento dell'errore, se disponibile |
+| `temperatura_rilevata` | decimale | no | Ultima temperatura letta, se disponibile |
+| `num_errori_consecutivi` | intero | sì | Numero di errori consecutivi raggiunto al momento di questo evento |
+
+### 5.5 Conservazione dei dati
 
 La politica di retention dei log (quanti giorni/record conservare) è da definire in fase di progettazione.
 
@@ -187,6 +199,7 @@ La politica di retention dei log (quanti giorni/record conservare) è da definir
 | RF-17 | Se l'errore riguarda il comando di spegnimento caldaia, il sistema ritenta lo spegnimento ad ogni ciclo di polling e invia notifica di errore ad ogni tentativo fallito |
 | RF-18 | Ad ogni ciclo di polling il sistema scrive un record di log su database |
 | RF-19 | Il record di log contiene: `data_ora`, `caldaia_accesa`, `temperatura_rilevata`, `temperatura_target`, `override_attivo` e, se l'override è attivo, `temperatura_override` |
+| RF-20 | Il sistema mantiene una tabella separata per i log di errore, con i campi: `data_ora`, `tipo_errore`, `caldaia_accesa` (se disponibile), `temperatura_rilevata` (se disponibile), `num_errori_consecutivi` |
 
 ---
 
