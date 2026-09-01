@@ -74,6 +74,14 @@ Valore intero positivo che indica ogni quanti secondi il sistema esegue il ciclo
 - Valore di esempio: `60`
 - Il valore deve essere maggiore di zero; in caso di valore assente o non valido il sistema usa un default ragionevole (es. `60` secondi).
 
+### 3.4 Soglia di errori consecutivi (`max_errori_consecutivi`)
+
+Valore intero positivo che indica dopo quanti errori consecutivi delle API esterne il sistema deve mettere in sicurezza la caldaia spegnendola.
+
+- Il contatore si azzera al primo ciclo di polling completato con successo
+- Valore di esempio: `3`
+- Non si applica agli errori di spegnimento caldaia, che vengono ritentati ad ogni ciclo senza limite (vedi sezione 4.3)
+
 ---
 
 ## 4. Integrazioni esterne
@@ -98,7 +106,16 @@ L'accensione e lo spegnimento della caldaia avvengono tramite una chiamata a un'
 
 ### 4.3 Comportamento in caso di errore delle API
 
-In caso di mancata risposta o errore da parte delle API esterne (timeout, errore HTTP, dati non validi), il comportamento del sistema (mantenere lo stato attuale, spegnere la caldaia per sicurezza, loggare l'errore, ecc.) è da definire in fase di progettazione.
+In caso di errore di comunicazione con le API esterne (timeout, errore HTTP, risposta non valida) il sistema:
+
+1. **Invia una notifica** che descrive il tipo di errore, ad esempio:
+   - "Impossibile leggere la temperatura dal sensore"
+   - "Impossibile inviare il comando di accensione alla caldaia"
+   - "Impossibile inviare il comando di spegnimento alla caldaia"
+
+2. **Conta gli errori consecutivi** per ciascuna categoria di errore. Quando il contatore raggiunge la soglia configurata (`max_errori_consecutivi`), il sistema **mette in sicurezza la caldaia spegnendola**.
+
+3. **Caso speciale — errore di spegnimento caldaia**: se l'errore riguarda proprio il comando di spegnimento, il sistema non applica la soglia ma tenta lo spegnimento **ad ogni ciclo di polling**, inviando una notifica di errore ad ogni tentativo fallito, finché l'operazione non ha successo.
 
 ---
 
@@ -165,8 +182,11 @@ La politica di retention dei log (quanti giorni/record conservare) è da definir
 | RF-12 | La temperatura ambiente viene letta tramite un client REST dedicato |
 | RF-13 | L'accensione e lo spegnimento della caldaia avvengono tramite un client REST dedicato che comanda il relay |
 | RF-14 | Gli endpoint delle API esterne sono configurabili |
-| RF-15 | Ad ogni ciclo di polling il sistema scrive un record di log su database |
-| RF-16 | Il record di log contiene: `data_ora`, `caldaia_accesa`, `temperatura_rilevata`, `temperatura_target`, `override_attivo` e, se l'override è attivo, `temperatura_override` |
+| RF-15 | In caso di errore delle API esterne il sistema invia una notifica che descrive il tipo di errore |
+| RF-16 | Il sistema conta gli errori consecutivi per categoria; al raggiungimento della soglia `max_errori_consecutivi` spegne la caldaia per sicurezza |
+| RF-17 | Se l'errore riguarda il comando di spegnimento caldaia, il sistema ritenta lo spegnimento ad ogni ciclo di polling e invia notifica di errore ad ogni tentativo fallito |
+| RF-18 | Ad ogni ciclo di polling il sistema scrive un record di log su database |
+| RF-19 | Il record di log contiene: `data_ora`, `caldaia_accesa`, `temperatura_rilevata`, `temperatura_target`, `override_attivo` e, se l'override è attivo, `temperatura_override` |
 
 ---
 
@@ -183,7 +203,7 @@ La politica di retention dei log (quanti giorni/record conservare) è da definir
 
 ## 9. Aspetti aperti (da definire)
 
-- Comportamento in caso di errore delle API esterne (timeout, errore HTTP): mantenere stato attuale o spegnere la caldaia per sicurezza
 - Persistenza dello stato della caldaia tra i riavvii
 - Gestione del cambio ora legale/solare
 - Politica di retention dei log (quanti giorni/record conservare prima di eliminare i dati storici)
+- Canale di notifica degli errori (email, webhook, log applicativo, ecc.)
