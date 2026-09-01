@@ -24,6 +24,8 @@ Ogni intervallo specifica:
 - **ora di fine** — orario in cui l'intervallo termina
 - **temperatura target** — temperatura desiderata in gradi Celsius, con una cifra decimale (es. `20.5`)
 
+Gli orari degli intervalli sono espressi in **UTC**. Il sistema confronta l'ora corrente in UTC con gli intervalli del calendario, eliminando qualsiasi ambiguità legata al cambio ora legale/solare.
+
 ### 2.4 Comportamento in assenza di intervalli
 
 Se per il momento corrente non è definito nessun intervallo attivo nel calendario, la **caldaia rimane spenta**. Non viene applicata alcuna logica di isteresi: l'assenza di programmazione equivale esplicitamente a "nessun riscaldamento richiesto".
@@ -82,6 +84,13 @@ Valore intero positivo che indica dopo quanti errori consecutivi delle API ester
 - Valore di esempio: `3`
 - Non si applica agli errori di spegnimento caldaia, che vengono ritentati ad ogni ciclo senza limite (vedi sezione 4.3)
 
+### 3.5 Retention dei log (`retention_log_giorni`)
+
+Valore intero positivo che indica il numero di giorni per cui i record di log vengono conservati nel database. I record più vecchi vengono eliminati automaticamente dal processo di pulizia (vedi sezione 5.5).
+
+- Unità: giorni
+- Valore di esempio: `30`
+
 ---
 
 ## 4. Integrazioni esterne
@@ -126,6 +135,15 @@ In caso di errore di comunicazione con le API esterne (timeout, errore HTTP, ris
 
 3. **Caso speciale — errore di spegnimento caldaia**: se l'errore riguarda proprio il comando di spegnimento, il sistema non applica la soglia ma tenta lo spegnimento **ad ogni ciclo di polling**, inviando una notifica di errore ad ogni tentativo fallito, finché l'operazione non ha successo.
 
+### 4.4 Client notifiche errori
+
+Le notifiche di errore vengono inviate tramite un **client REST dedicato**, analogo per struttura ai client del relay e del termometro.
+
+- Il client viene invocato ogni volta che si verifica un errore di comunicazione con le API esterne
+- Effettua una chiamata a un servizio REST esterno passando la descrizione dell'errore
+- L'endpoint di destinazione è configurabile
+- L'interfaccia del client è astratta: l'implementazione corrente usa una chiamata REST, ma potrebbe essere sostituita con altri canali (es. email, message broker) senza modificare la logica di controllo
+
 ---
 
 ## 5. Database e log
@@ -163,7 +181,9 @@ In aggiunta alla tabella di log principale, il sistema mantiene una tabella dedi
 
 ### 5.5 Conservazione dei dati
 
-La politica di retention dei log (quanti giorni/record conservare) è da definire in fase di progettazione.
+La durata di conservazione dei log è configurabile tramite il parametro `retention_log_giorni`, che indica il numero di giorni oltre i quali i record vengono eliminati. La pulizia si applica sia alla tabella dei log di polling che alla tabella dei log di errore.
+
+Un processo dedicato viene eseguito **ogni ora** e cancella tutti i record con `data_ora` anteriore a `now - retention_log_giorni`.
 
 ---
 
@@ -221,6 +241,11 @@ Lo stato corrente della caldaia utilizzato nella logica di isteresi (zona neutra
 | RF-18 | Ad ogni ciclo di polling il sistema scrive un record di log su database |
 | RF-19 | Il record di log contiene: `data_ora`, `caldaia_accesa`, `temperatura_rilevata`, `temperatura_target`, `override_attivo` e, se l'override è attivo, `temperatura_override` |
 | RF-20 | Il sistema mantiene una tabella separata per i log di errore, con i campi: `data_ora`, `tipo_errore`, `caldaia_accesa` (se disponibile), `temperatura_rilevata` (se disponibile), `num_errori_consecutivi` |
+| RF-24 | Gli orari degli intervalli del calendario sono espressi in UTC |
+| RF-25 | Il sistema confronta l'ora corrente in UTC con gli intervalli del calendario |
+| RF-26 | La durata di conservazione dei log è configurabile tramite il parametro `retention_log_giorni` |
+| RF-27 | Un processo dedicato viene eseguito ogni ora e cancella i record di log più vecchi di `retention_log_giorni` giorni, sia dalla tabella dei log di polling che da quella dei log di errore |
+| RF-28 | Le notifiche di errore vengono inviate tramite un client REST dedicato con endpoint configurabile |
 
 ---
 
@@ -237,6 +262,4 @@ Lo stato corrente della caldaia utilizzato nella logica di isteresi (zona neutra
 
 ## 9. Aspetti aperti (da definire)
 
-- Gestione del cambio ora legale/solare
-- Politica di retention dei log (quanti giorni/record conservare prima di eliminare i dati storici)
-- Canale di notifica degli errori (email, webhook, log applicativo, ecc.)
+- Formato e contenuto esatto del payload inviato al servizio REST di notifica errori
