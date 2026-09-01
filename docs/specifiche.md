@@ -2,7 +2,7 @@
 
 ## 1. Descrizione generale
 
-Il sistema gestisce un termostato domestico con programmazione settimanale. Legge periodicamente la temperatura ambiente e decide se attivare o disattivare la caldaia in base alla programmazione oraria configurata o a un'impostazione manuale di override.
+Il sistema gestisce un termostato domestico con programmazione settimanale. Legge periodicamente la temperatura ambiente e decide se attivare o disattivare la caldaia in base alla programmazione oraria configurata o a un'impostazione manuale di override. All'avvio, il sistema legge lo stato attuale del relay della caldaia direttamente dal dispositivo fisico, così da poter riprendere la logica di controllo senza assumere alcuno stato iniziale.
 
 ---
 
@@ -86,7 +86,7 @@ Valore intero positivo che indica dopo quanti errori consecutivi delle API ester
 
 ## 4. Integrazioni esterne
 
-Il sistema non legge direttamente sensori hardware né comanda direttamente il relay della caldaia. Tutte le interazioni con il mondo fisico avvengono tramite **API REST esterne**. Il sistema espone due client REST dedicati, uno per ciascuna operazione.
+Il sistema non legge direttamente sensori hardware né comanda direttamente il relay della caldaia. Tutte le interazioni con il mondo fisico avvengono tramite **API REST esterne**. Il sistema dispone di due client REST dedicati: uno per il sensore di temperatura e uno per il relay della caldaia.
 
 ### 4.1 Client lettura temperatura
 
@@ -96,13 +96,22 @@ La temperatura ambiente viene acquisita tramite una chiamata a un'API REST espos
 - Restituisce il valore di temperatura corrente in gradi Celsius
 - L'endpoint di destinazione è configurabile
 
-### 4.2 Client controllo relay caldaia
+### 4.2 Client relay caldaia
 
-L'accensione e lo spegnimento della caldaia avvengono tramite una chiamata a un'API REST che comanda il relay del dispositivo di controllo (es. relay smart, microcontrollore con endpoint HTTP).
+Il client relay espone due operazioni verso la stessa API REST del dispositivo di controllo (es. relay smart, microcontrollore con endpoint HTTP):
 
-- Il client viene invocato quando il sistema decide di cambiare lo stato della caldaia
-- Invia il comando di accensione o spegnimento al relay
+**Operazione 1 — Lettura stato relay**
+- Restituisce lo stato attuale del relay: acceso o spento
+- Viene invocata **all'avvio dell'applicazione** per conoscere lo stato reale della caldaia prima di entrare nel ciclo di polling
+- Può essere invocata anche durante il ciclo normale se necessario
 - L'endpoint di destinazione è configurabile
+
+**Operazione 2 — Comando accensione/spegnimento**
+- Invia il comando di accensione o spegnimento al relay
+- Viene invocata quando il sistema decide di cambiare lo stato della caldaia
+- L'endpoint di destinazione è configurabile
+
+> Lo stato della caldaia **non viene mai memorizzato in RAM** dal sistema. La fonte di verità è esclusivamente il relay fisico: ad ogni decisione che richiede lo stato attuale, esso viene letto tramite l'operazione di lettura del client relay.
 
 ### 4.3 Comportamento in caso di errore delle API
 
@@ -160,19 +169,28 @@ La politica di retention dei log (quanti giorni/record conservare) è da definir
 
 ## 6. Logica di controllo
 
-### 6.1 Sorgente della temperatura target
+### 6.1 Avvio del sistema
+
+All'avvio, prima di entrare nel ciclo di polling, il sistema:
+
+1. Legge lo stato attuale del relay tramite il client relay (operazione di lettura stato)
+2. Utilizza tale stato come punto di partenza per la logica di controllo
+
+### 6.2 Sorgente della temperatura target
 
 1. Se `override_attivo = true` → usa `temperatura_override`
 2. Altrimenti → cerca l'intervallo attivo nel calendario per il giorno e l'ora correnti
 3. Se nessun intervallo è attivo → **caldaia spenta** (nessuna temperatura target)
 
-### 6.2 Decisione di accensione caldaia
+### 6.3 Decisione di accensione caldaia
+
+Lo stato corrente della caldaia utilizzato nella logica di isteresi (zona neutra) viene letto dal relay fisico, non da una variabile interna.
 
 | Condizione | Stato caldaia |
 |---|---|
 | `temperatura_ambiente < temperatura_target - soglia_attivazione` | ON |
 | `temperatura_ambiente >= temperatura_target` | OFF |
-| Tra i due valori (zona neutra) | invariato (mantiene stato precedente) |
+| Tra i due valori (zona neutra) | invariato — stato letto dal relay |
 
 ---
 
@@ -192,7 +210,10 @@ La politica di retention dei log (quanti giorni/record conservare) è da definir
 | RF-10 | In assenza di intervallo attivo nel calendario (e senza override), la caldaia rimane spenta |
 | RF-11 | La frequenza del ciclo di controllo è configurabile tramite il parametro `intervallo_polling_secondi` |
 | RF-12 | La temperatura ambiente viene letta tramite un client REST dedicato |
-| RF-13 | L'accensione e lo spegnimento della caldaia avvengono tramite un client REST dedicato che comanda il relay |
+| RF-13 | L'accensione e lo spegnimento della caldaia avvengono tramite il client relay (operazione di comando) |
+| RF-21 | Il client relay espone anche un'operazione di lettura stato che restituisce lo stato attuale del relay |
+| RF-22 | All'avvio il sistema legge lo stato del relay tramite l'operazione di lettura, senza assumere alcuno stato iniziale |
+| RF-23 | Lo stato della caldaia non viene memorizzato in RAM; la fonte di verità è esclusivamente il relay fisico |
 | RF-14 | Gli endpoint delle API esterne sono configurabili |
 | RF-15 | In caso di errore delle API esterne il sistema invia una notifica che descrive il tipo di errore |
 | RF-16 | Il sistema conta gli errori consecutivi per categoria; al raggiungimento della soglia `max_errori_consecutivi` spegne la caldaia per sicurezza |
@@ -216,7 +237,6 @@ La politica di retention dei log (quanti giorni/record conservare) è da definir
 
 ## 9. Aspetti aperti (da definire)
 
-- Persistenza dello stato della caldaia tra i riavvii
 - Gestione del cambio ora legale/solare
 - Politica di retention dei log (quanti giorni/record conservare prima di eliminare i dati storici)
 - Canale di notifica degli errori (email, webhook, log applicativo, ecc.)
