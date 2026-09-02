@@ -91,6 +91,16 @@ Valore intero positivo che indica il numero di giorni per cui i record di log ve
 - Unità: giorni
 - Valore di esempio: `30`
 
+### 3.6 Notifiche ntfy
+
+| Parametro | Tipo | Descrizione |
+|---|---|---|
+| `ntfy_url` | stringa | URL base del servizio ntfy (es. `https://ntfy.sh`) |
+| `ntfy_topic` | stringa | Topic ntfy a cui inviare i messaggi (valore corrente: `sliverd`) |
+| `debug_mode` | booleano | Se `true`, invia messaggi informativi di accensione/spegnimento caldaia tramite ntfy |
+
+Quando `debug_mode = false`, vengono inviati solo i messaggi di errore. Quando `debug_mode = true`, vengono inviati anche i messaggi informativi relativi alle azioni di accensione e spegnimento della caldaia.
+
 ---
 
 ## 4. Integrazioni esterne
@@ -135,14 +145,31 @@ In caso di errore di comunicazione con le API esterne (timeout, errore HTTP, ris
 
 3. **Caso speciale — errore di spegnimento caldaia**: se l'errore riguarda proprio il comando di spegnimento, il sistema non applica la soglia ma tenta lo spegnimento **ad ogni ciclo di polling**, inviando una notifica di errore ad ogni tentativo fallito, finché l'operazione non ha successo.
 
-### 4.4 Client notifiche errori
+### 4.4 Client notifiche (ntfy)
 
-Le notifiche di errore vengono inviate tramite un **client REST dedicato**, analogo per struttura ai client del relay e del termometro.
+Le notifiche vengono inviate tramite il servizio **[ntfy](https://ntfy.sh)**, che recapita i messaggi all'app ntfy su iPhone. Il client è strutturato in modo analogo ai client del relay e del termometro.
 
-- Il client viene invocato ogni volta che si verifica un errore di comunicazione con le API esterne
-- Effettua una chiamata a un servizio REST esterno passando la descrizione dell'errore
-- L'endpoint di destinazione è configurabile
-- L'interfaccia del client è astratta: l'implementazione corrente usa una chiamata REST, ma potrebbe essere sostituita con altri canali (es. email, message broker) senza modificare la logica di controllo
+Il client invia messaggi di due tipi:
+
+**Messaggi di errore**
+- Inviati ogni volta che si verifica un errore di comunicazione con le API esterne
+- Inviati sempre, indipendentemente dal valore di `debug_mode`
+- Priorità: alta (errore)
+- Esempio: "Impossibile leggere la temperatura dal sensore"
+
+**Messaggi informativi** *(solo se `debug_mode = true`)*
+- Inviati ogni volta che la caldaia viene accesa o spenta
+- Priorità: normale (info)
+- Esempio: "Caldaia accesa — temperatura rilevata 19.3°C, target 20.5°C"
+- Esempio: "Caldaia spenta — temperatura rilevata 20.6°C, target 20.5°C"
+
+Parametri di configurazione relativi alle notifiche:
+
+| Parametro | Tipo | Descrizione |
+|---|---|---|
+| `ntfy_url` | stringa | URL base del servizio ntfy (es. `https://ntfy.sh`) |
+| `ntfy_topic` | stringa | Topic ntfy a cui inviare i messaggi (valore corrente: `sliverd`) |
+| `debug_mode` | booleano | Se `true`, abilita l'invio dei messaggi informativi di accensione/spegnimento |
 
 ---
 
@@ -245,7 +272,9 @@ Lo stato corrente della caldaia utilizzato nella logica di isteresi (zona neutra
 | RF-25 | Il sistema confronta l'ora corrente in UTC con gli intervalli del calendario |
 | RF-26 | La durata di conservazione dei log è configurabile tramite il parametro `retention_log_giorni` |
 | RF-27 | Un processo dedicato viene eseguito ogni ora e cancella i record di log più vecchi di `retention_log_giorni` giorni, sia dalla tabella dei log di polling che da quella dei log di errore |
-| RF-28 | Le notifiche di errore vengono inviate tramite un client REST dedicato con endpoint configurabile |
+| RF-28 | Le notifiche vengono inviate tramite il servizio ntfy verso il topic configurato (`ntfy_topic`) |
+| RF-29 | I messaggi di errore vengono inviati sempre, indipendentemente dal valore di `debug_mode` |
+| RF-30 | Se `debug_mode = true`, il sistema invia tramite ntfy un messaggio informativo ad ogni accensione e spegnimento della caldaia |
 
 ---
 
@@ -262,4 +291,4 @@ Lo stato corrente della caldaia utilizzato nella logica di isteresi (zona neutra
 
 ## 9. Aspetti aperti (da definire)
 
-- Formato e contenuto esatto del payload inviato al servizio REST di notifica errori
+Nessun aspetto aperto rilevante al momento. Le specifiche sono complete.
