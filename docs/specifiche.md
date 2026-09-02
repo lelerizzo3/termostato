@@ -214,22 +214,67 @@ Un processo dedicato viene eseguito **ogni ora** e cancella tutti i record con `
 
 ---
 
-## 6. Logica di controllo
+## 7. API REST esposte
 
-### 6.1 Avvio del sistema
+L'applicazione espone una serie di endpoint REST utilizzati da un front-end per la gestione e il monitoraggio del termostato.
+
+### 7.1 Configurazione
+
+| Metodo | Endpoint | Descrizione |
+|---|---|---|
+| `GET` | `/config` | Restituisce la configurazione corrente del sistema (tutti i parametri) |
+| `PUT` | `/config` | Aggiorna la configurazione del sistema |
+| `GET` | `/config/calendario` | Restituisce il calendario settimanale |
+| `PUT` | `/config/calendario` | Aggiorna il calendario settimanale |
+
+### 7.2 Log di polling
+
+| Metodo | Endpoint | Descrizione |
+|---|---|---|
+| `GET` | `/log` | Restituisce i record di log di polling |
+
+**Parametri query opzionali:**
+
+| Parametro | Tipo | Descrizione |
+|---|---|---|
+| `da` | data (UTC) | Inizio del range di date (incluso) |
+| `a` | data (UTC) | Fine del range di date (incluso) |
+
+Se nessun parametro viene passato, il servizio restituisce i log del **giorno corrente** in UTC. Se viene passato solo `da`, il limite superiore è la fine del giorno corrente.
+
+### 7.3 Log di errore
+
+| Metodo | Endpoint | Descrizione |
+|---|---|---|
+| `GET` | `/log/errori` | Restituisce i record della tabella log errori |
+
+**Parametri query opzionali:**
+
+| Parametro | Tipo | Descrizione |
+|---|---|---|
+| `da` | data (UTC) | Inizio del range di date (incluso) |
+| `a` | data (UTC) | Fine del range di date (incluso) |
+
+Se nessun parametro viene passato, il servizio restituisce gli errori del **giorno corrente** in UTC. Se viene passato solo `da`, il limite superiore è la fine del giorno corrente.
+
+---
+
+## 8. Logica di controllo
+
+### 8.1 Avvio del sistema
 
 All'avvio, prima di entrare nel ciclo di polling, il sistema:
 
 1. Legge lo stato attuale del relay tramite il client relay (operazione di lettura stato)
 2. Utilizza tale stato come punto di partenza per la logica di controllo
 
-### 6.2 Sorgente della temperatura target
+### 8.2 Sorgente della temperatura target
 
 1. Se `override_attivo = true` → usa `temperatura_override`
 2. Altrimenti → cerca l'intervallo attivo nel calendario per il giorno e l'ora correnti
 3. Se nessun intervallo è attivo → **caldaia spenta** (nessuna temperatura target)
 
-### 6.3 Decisione di accensione caldaia
+### 8.3 Decisione di accensione caldaia
 
 Lo stato corrente della caldaia utilizzato nella logica di isteresi (zona neutra) viene letto dal relay fisico, non da una variabile interna.
 
@@ -241,7 +286,7 @@ Lo stato corrente della caldaia utilizzato nella logica di isteresi (zona neutra
 
 ---
 
-## 7. Requisiti funzionali
+## 9. Requisiti funzionali
 
 | ID | Requisito |
 |---|---|
@@ -275,10 +320,15 @@ Lo stato corrente della caldaia utilizzato nella logica di isteresi (zona neutra
 | RF-28 | Le notifiche vengono inviate tramite il servizio ntfy verso il topic configurato (`ntfy_topic`) |
 | RF-29 | I messaggi di errore vengono inviati sempre, indipendentemente dal valore di `debug_mode` |
 | RF-30 | Se `debug_mode = true`, il sistema invia tramite ntfy un messaggio informativo ad ogni accensione e spegnimento della caldaia |
+| RF-31 | L'applicazione espone un endpoint REST per leggere la configurazione corrente |
+| RF-32 | L'applicazione espone un endpoint REST per aggiornare la configurazione |
+| RF-33 | L'applicazione espone un endpoint REST per leggere e aggiornare il calendario settimanale |
+| RF-34 | L'applicazione espone un endpoint REST per consultare i log di polling, con filtro opzionale per range di date; in assenza di parametri restituisce i log del giorno corrente |
+| RF-35 | L'applicazione espone un endpoint REST per consultare i log di errore, con filtro opzionale per range di date; in assenza di parametri restituisce gli errori del giorno corrente |
 
 ---
 
-## 8. Requisiti non funzionali
+## 10. Requisiti non funzionali
 
 | ID | Requisito |
 |---|---|
@@ -289,6 +339,6 @@ Lo stato corrente della caldaia utilizzato nella logica di isteresi (zona neutra
 
 ---
 
-## 9. Aspetti aperti (da definire)
+## 11. Aspetti aperti (da definire)
 
 Nessun aspetto aperto rilevante al momento. Le specifiche sono complete.
