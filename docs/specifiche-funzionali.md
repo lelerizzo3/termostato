@@ -101,6 +101,16 @@ Valore intero positivo che indica il numero di giorni per cui i record di log ve
 
 Quando `debug_mode = false`, vengono inviati solo i messaggi di errore. Quando `debug_mode = true`, vengono inviati anche i messaggi informativi relativi alle azioni di accensione e spegnimento della caldaia.
 
+### 3.7 Percorso del database (`database_path`)
+
+Percorso del file di database **SQLite** utilizzato dal sistema per la persistenza dei log.
+
+- Tipo: stringa (percorso su filesystem, assoluto o relativo alla directory di esecuzione)
+- Valore di esempio: `./data/termostato.db`
+- All'avvio, il sistema verifica l'esistenza del file indicato: se **non esiste**, lo crea (insieme alle eventuali directory intermedie) e inizializza lo schema; se **esiste**, lo utilizza così com'è.
+- Il sistema non richiede alcun server di database esterno: l'intera persistenza è contenuta nel singolo file SQLite.
+- Il parametro viene letto all'avvio e determina il datasource già aperto; per questo `database_path` è un parametro di **bootstrap** e non può essere modificato tramite `PUT /config` senza riavviare l'applicazione.
+
 ---
 
 ## 4. Integrazioni esterne
@@ -174,6 +184,16 @@ Parametri di configurazione relativi alle notifiche:
 ---
 
 ## 5. Database e log
+
+### 5.0 Motore di persistenza
+
+Il sistema utilizza **SQLite** come motore di persistenza, con l'intero database contenuto in un unico file su filesystem il cui percorso è configurabile tramite il parametro `database_path` (vedi sezione 3.7). Questa scelta consente di eseguire l'applicativo su qualsiasi macchina dotata del solo runtime Java, senza dipendere da un server di database esterno.
+
+**Inizializzazione automatica all'avvio:**
+
+1. Il sistema legge `database_path` dalla configurazione.
+2. Se il file non esiste, viene creato (comprese le directory intermedie mancanti) e lo schema (tabelle di log di polling e log errori) viene inizializzato automaticamente.
+3. Se il file esiste già, viene aperto e utilizzato senza reinizializzare i dati esistenti.
 
 ### 5.1 Scopo
 
@@ -325,6 +345,8 @@ Lo stato corrente della caldaia utilizzato nella logica di isteresi (zona neutra
 | RF-33 | L'applicazione espone un endpoint REST per leggere e aggiornare il calendario settimanale |
 | RF-34 | L'applicazione espone un endpoint REST per consultare i log di polling, con filtro opzionale per range di date; in assenza di parametri restituisce i log del giorno corrente |
 | RF-35 | L'applicazione espone un endpoint REST per consultare i log di errore, con filtro opzionale per range di date; in assenza di parametri restituisce gli errori del giorno corrente |
+| RF-36 | Il sistema utilizza un database SQLite su file, il cui percorso è configurabile tramite il parametro `database_path` |
+| RF-37 | All'avvio il sistema verifica l'esistenza del file di database: se non esiste lo crea (con le directory intermedie) e ne inizializza lo schema; se esiste lo utilizza senza reinizializzare i dati |
 
 ---
 
@@ -336,6 +358,7 @@ Lo stato corrente della caldaia utilizzato nella logica di isteresi (zona neutra
 | RNF-02 | Le temperature sono espresse in gradi Celsius con una cifra decimale |
 | RNF-03 | Il sistema deve essere robusto in caso di configurazione mancante o malformata |
 | RNF-04 | Il sistema deve gestire in modo controllato gli errori di comunicazione con le API esterne |
+| RNF-05 | L'applicativo è distribuito come singolo jar eseguibile da console e richiede sulla macchina di destinazione unicamente un runtime Java, senza server di database esterni né container |
 
 ---
 

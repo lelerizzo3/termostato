@@ -1,0 +1,34 @@
+spring:
+  config:
+    activate:
+      on-profile: mock
+
+server:
+  port: 8080
+
+termostato:
+  # I client di produzione chiamano gli endpoint mock nello stesso processo.
+  sensore:
+    url: http://localhost:8080
+  relay:
+    url: http://localhost:8080
+
+  mock-devices:
+    enabled: true
+    temperature: 19.0
+    initial-relay-on: false
+
+  # Default per il primo scenario E2E: temperatura 19.0, target 20.5 -> ON.
+  override-attivo: true
+  temperatura-override: 20.5
+  intervallo-polling-secondi: 2
+  scheduler-tick-millis: 200
+
+  # Ntfy resta il servizio reale; il topic può essere sovrascritto da CLI/YAML.
+  ntfy-url: https://ntfy.sh
+  ntfy-topic: sliverd
+  debug-mode: false
+
+  config-file: ./data/mock-config.json
+  calendario-file: ./data/mock-calendario.json
+  database-path: ./data/mock-termostato.db

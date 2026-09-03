@@ -1,0 +1,39 @@
+spring:
+  application:
+    name: termostato
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+  lifecycle:
+    timeout-per-shutdown-phase: 10s
+
+server:
+  port: 8080
+
+termostato:
+  soglia-attivazione: 0.3
+  override-attivo: false
+  temperatura-override: null
+  intervallo-polling-secondi: 60
+  max-errori-consecutivi: 3
+  retention-log-giorni: 30
+  ntfy-url: https://ntfy.sh
+  ntfy-topic: sliverd
+  debug-mode: false
+  sensore:
+    url: http://sensore.local
+  relay:
+    url: http://relay.local
+  config-file: ./data/config.json
+  calendario-file: ./data/calendario.json
+  database-path: ./data/termostato.db
+  http-timeout-millis: 3000
+  scheduler-tick-millis: 1000
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
