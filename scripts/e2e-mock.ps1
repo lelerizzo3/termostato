@@ -29,9 +29,10 @@ $arguments = @(
 
 $process = Start-Process -FilePath 'java' -ArgumentList $arguments -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
 $baseUrl = "http://localhost:$Port"
+$headers = @{ 'X-API-Key' = 'e2e-test-key' }
 
 function Get-Json($path) {
-    return Invoke-RestMethod -Uri "$baseUrl$path" -Method Get
+    return Invoke-RestMethod -Uri "$baseUrl$path" -Method Get -Headers $headers
 }
 
 function Wait-For($description, [scriptblock]$condition, [int]$timeoutSeconds = 30) {
@@ -54,7 +55,13 @@ try {
         try { (Get-Json '/actuator/health').status -eq 'UP' } catch { $false }
     }
 
-    Invoke-RestMethod -Uri "$baseUrl/mock/reset" -Method Post | Out-Null
+    $invalidStatus = (& curl.exe -sS -o NUL -w '%{http_code}' `
+        -H 'X-API-Key: invalid-e2e-key' "$baseUrl/actuator/health").Trim()
+    if ($invalidStatus -ne '401') {
+        throw "Una API-key non autorizzata ha restituito HTTP $invalidStatus invece di 401."
+    }
+
+    Invoke-RestMethod -Uri "$baseUrl/mock/reset" -Method Post -Headers $headers | Out-Null
     $initial = Get-Json '/mock/state'
     if ($initial.temperatura -ne 19.0 -or $initial.relay_acceso) {
         throw "Stato mock iniziale inatteso: $($initial | ConvertTo-Json -Compress)"
@@ -67,7 +74,7 @@ try {
 
     $newTemperature = @{ temperatura = 21.0 } | ConvertTo-Json
     Invoke-RestMethod -Uri "$baseUrl/mock/temperature" -Method Put `
-        -ContentType 'application/json' -Body $newTemperature | Out-Null
+        -Headers $headers -ContentType 'application/json' -Body $newTemperature | Out-Null
 
     Wait-For 'spegnimento relay al raggiungimento target' {
         (Get-Json '/mock/state').relay_acceso -eq $false
@@ -92,6 +99,8 @@ try {
         StatoAcceso = ($heated | ConvertTo-Json -Compress)
         StatoSpento = ($cooled | ConvertTo-Json -Compress)
         RecordLog = $logs.Count
+        ApiKeyValida = 'e2e-test-key'
+        ApiKeyNonValidaHttp = $invalidStatus
         Ntfy = 'https://ntfy.sh (client reale)'
         DatabaseCreato = Test-Path (Join-Path $runDirectory 'termostato.db')
     } | Format-List

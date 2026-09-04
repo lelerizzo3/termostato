@@ -18,7 +18,7 @@ public class TemperatureClient {
     }
 
     public BigDecimal leggiTemperatura() {
-        TemperatureHttpApi api = factory.createProxy(configuration.current().sensoreUrl(), TemperatureHttpApi.class);
+        TemperatureHttpApi api = factory.createProxy(configuration.current().sensoreUrl(), TemperatureHttpApi.class, true);
         TemperatureReading reading = api.leggiTemperatura();
         if (reading == null || reading.temperatura() == null) {
             throw new IllegalStateException("Risposta temperatura vuota");

@@ -116,6 +116,12 @@ com.termostato
 │   └── notification/
 │       ├── NtfyHttpApi.java             # @HttpExchange
 │       └── NotificationService.java
+├── security/
+│   └── ApiKeyAuthenticationFilter.java  # X-API-Key, HTTP 401
+├── mock/
+│   ├── MockDeviceProperties.java
+│   ├── MockDeviceState.java
+│   └── MockDeviceController.java
 ├── persistence/
 │   ├── PollingLogRecord.java
 │   ├── ErrorLogRecord.java
@@ -152,6 +158,7 @@ Mappa i parametri della sezione 3 delle specifiche funzionali. Legato con `@Conf
 | `sensore.url` | `String` | RF-12, RF-14 | — | `@NotBlank` (URL) |
 | `relay.url` | `String` | RF-13, RF-14, RF-21 | — | `@NotBlank` (URL) |
 | `databasePath` | `String` | RF-36, RF-37 | `./data/termostato.db` | `@NotBlank` (percorso file SQLite) |
+| `apiKeys` | `List<String>` | RF-38, RF-39 | `[]` | stringhe non vuote; confronto constant-time; lista vuota = fail-closed |
 
 > **Nota:** i valori di temperatura usano `BigDecimal` con scala 1 (RNF-02) per evitare imprecisioni float e garantire una sola cifra decimale.
 
@@ -192,6 +199,18 @@ Al riavvio successivo si applica di nuovo la logica di caricamento sopra, quindi
 - Config mancante → si applicano i default della tabella 3.1.
 - Config malformata → l'errore di parsing viene loggato, si mantiene l'ultima config valida (o i default all'avvio) e si invia notifica ntfy di errore.
 - Il calendario malformato non blocca l'avvio: se non caricabile, il resolver tratta ogni momento come "nessun intervallo attivo" → caldaia spenta (comportamento sicuro, coerente con RF-10).
+
+### 3.4 Autenticazione API-key (RF-38, RF-39)
+
+`ApiKeyAuthenticationFilter` estende `OncePerRequestFilter` e viene registrato come bean Spring. Intercetta tutte le richieste inbound, incluse API applicative, Actuator e mock.
+
+1. Legge l'header `X-API-Key` senza considerare mai parametri query o body.
+2. Confronta la chiave ricevuta con `SystemConfiguration.apiKeys()` usando `MessageDigest.isEqual` per evitare confronti a tempo variabile.
+3. Se una chiave coincide, invoca il filtro/controller successivo.
+4. In caso di header mancante, vuoto o non coincidente, interrompe la catena e restituisce `401 Unauthorized`, header `WWW-Authenticate: ApiKey` e un body JSON sintetico.
+5. Una lista configurata vuota non disabilita la sicurezza: è fail-closed e rifiuta tutte le richieste.
+
+Il filtro non viene applicato al forwarding interno `/error`, per evitare un secondo errore durante la produzione della risposta HTTP. Il `PUT /config` può aggiornare la lista, ma la richiesta deve essere autenticata con una chiave attualmente valida.
 
 ---
 
@@ -334,6 +353,8 @@ Per il primo test E2E è disponibile il profilo Spring `mock`, attivabile con `-
 | `/mock/reset` | `POST` | Ripristina i valori iniziali del profilo |
 
 Lo stato del relay nel mock è una `AtomicBoolean` del dispositivo simulato e non è usato dal `ThermostatControlService` come stato interno della caldaia. In produzione il mock controller non viene registrato (`termostato.mock-devices.enabled=false` di default).
+
+Il `RestClientFactory` aggiunge `X-API-Key` solo alle proxy sensore/relay quando `mock-devices.enabled=true`, usando la prima chiave configurata (`e2e-test-key` nel profilo). In questo modo i mock, essendo endpoint backend protetti, possono essere chiamati dai client interni senza propagare la chiave a dispositivi esterni o ntfy.
 
 Il client ntfy resta reale anche nel profilo mock: `ntfy-url=https://ntfy.sh`. `debug-mode` è `false` di default nel profilo per evitare notifiche informative durante lo scenario automatico; può essere abilitato esplicitamente.
 
@@ -518,6 +539,16 @@ errorLogRepository.deleteByDataOraBefore(soglia)     # RF-27
 
 Controller MVC. Tutti i timestamp in ingresso/uscita in UTC. DTO dedicati separano il modello di dominio dal contratto REST.
 
+### 9.0 Autenticazione inbound
+
+Tutte le richieste verso il backend devono includere:
+
+```http
+X-API-Key: <api-key-configurata>
+```
+
+`ApiKeyAuthenticationFilter` valida l'header prima del dispatch MVC. Una chiave valida consente l'accesso; una chiave mancante o non presente in `api_keys` produce HTTP `401 Unauthorized`. La stessa regola vale per `/actuator/health` e per gli endpoint del profilo `mock`.
+
 ### 9.1 Configurazione — RF-31, RF-32, RF-33
 
 | Metodo | Endpoint | Handler | Requisito | Note |
@@ -597,6 +628,8 @@ termostato:
   calendario-file: ./data/calendario.json
   # percorso file database SQLite (RF-36, RF-37)
   database-path: ./data/termostato.db
+  # Fail-closed: impostare almeno una chiave per abilitare le API REST.
+  api-keys: []
 
 spring:
   application:
@@ -625,6 +658,7 @@ Il bean `DatabaseConfiguration` costruisce il `SQLiteDataSource` direttamente da
 | Unit | `TargetTemperatureResolver` (calendario/override, UTC, RF-07/RF-10/RF-24/RF-25) | JUnit 5 |
 | Unit | `calcolaDecisione` isteresi (RF-08/RF-09, zona neutra) | JUnit 5 (parametrizzati) |
 | Unit | `ErrorTrackingService` (soglia, reset, caso TURN_OFF RF-16/RF-17) | JUnit 5 |
+| Unit | `ApiKeyAuthenticationFilter` (chiave valida, assente, non autorizzata) | JUnit 5 + MockHttpServlet |
 | Integrazione | Client `@HttpExchange` (temp/relay/ntfy) | RestClient stub / MockWebServer |
 | Integrazione | Repository + retention (RF-27) | SQLite su file temporaneo (stesso motore della produzione) |
 | Integrazione | Inizializzazione DB: creazione file se assente (RF-37) | Smoke test jar + file temporaneo |
@@ -681,6 +715,7 @@ Casi limite obbligatori da coprire:
 | RF-28, RF-30 | Sez. 5.4 (ntfy, debug_mode) |
 | RF-31..RF-35 | Sez. 9 (API REST) |
 | RF-36, RF-37 | Sez. 7.0 (SQLite, init automatica del file) |
+| RF-38, RF-39 | Sez. 3.4 / 9.0 (`SystemConfiguration.apiKeys`, `ApiKeyAuthenticationFilter`) |
 | RNF-01 | Sez. 3.2 (`ConfigurationService`) |
 | RNF-02 | Sez. 3.1 / 7 (`BigDecimal` scala 1, colonne REAL arrotondate) |
 | RNF-03 | Sez. 3.3 (robustezza config) |
@@ -698,6 +733,7 @@ Casi limite obbligatori da coprire:
 | Scelta MVC vs WebFlux, Flyway e repository JDBC | **Media** | Scelte progettuali ragionevoli per il dominio; non imposte dalle specifiche, alternative valide esistono. |
 | Persistenza su SQLite file singolo + jar eseguibile (no Docker) | **Alta** | Deciso esplicitamente dallo stakeholder e formalizzato in RF-36, RF-37, RNF-05. |
 | Uso di Flyway con `flyway-database-nc-sqlite` | **Alta** | Verificato nello smoke test: Flyway ha applicato la migrazione V1 su un file SQLite nuovo. |
+| Autenticazione API-key inbound (`X-API-Key`, HTTP 401) | **Alta** | Header, lista `api_keys`, filtro e test sono definiti e implementati; il profilo E2E verifica anche la chiave errata. |
 | Persistenza config/calendario su file JSON | **Media** | Le specifiche citano file JSON per il calendario (RF-01); per la config la scelta è progettuale. |
 | Contratto esatto delle API esterne (path, formato payload sensore/relay/ntfy) | **Bassa** | Le specifiche indicano solo che gli endpoint sono configurabili; path e schema JSON qui sono ipotesi da confermare con i dispositivi reali. |
 

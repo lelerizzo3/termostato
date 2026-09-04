@@ -101,15 +101,25 @@ public class ConfigurationService implements InitializingBean {
             return;
         }
         try {
-            SystemConfiguration loaded = jsonMapper.readValue(Files.readString(path, StandardCharsets.UTF_8),
-                    SystemConfiguration.class);
+            String rawJson = Files.readString(path, StandardCharsets.UTF_8);
+            SystemConfiguration loaded = jsonMapper.readValue(rawJson, SystemConfiguration.class);
+            boolean apiKeysMissing = !rawJson.contains("\"api_keys\"") && !rawJson.contains("\"apiKeys\"");
+            var effectiveApiKeys = apiKeysMissing ? defaults.apiKeys() : loaded.apiKeys();
             // Il path del database determina il datasource prima del caricamento JSON: resta bootstrap-only.
-            if (!defaults.databasePath().equals(loaded.databasePath())) {
+            if (!defaults.databasePath().equals(loaded.databasePath()) || apiKeysMissing) {
                 loaded = new SystemConfiguration(
                         loaded.sogliaAttivazione(), loaded.overrideAttivo(), loaded.temperaturaOverride(),
                         loaded.intervalloPollingSecondi(), loaded.maxErroriConsecutivi(), loaded.retentionLogGiorni(),
                         loaded.ntfyUrl(), loaded.ntfyTopic(), loaded.debugMode(), loaded.sensoreUrl(),
-                        loaded.relayUrl(), defaults.databasePath());
+                        loaded.relayUrl(), defaults.databasePath(), effectiveApiKeys);
+                if (apiKeysMissing) {
+                    try {
+                        writeJson(path, loaded);
+                    } catch (RuntimeException migrationFailure) {
+                        log.warn("Impossibile migrare api_keys nel file {}: uso il valore in memoria", path,
+                                migrationFailure);
+                    }
+                }
             }
             configuration.set(loaded);
         } catch (Exception exception) {

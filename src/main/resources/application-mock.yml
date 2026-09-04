@@ -9,9 +9,9 @@ server:
 termostato:
   # I client di produzione chiamano gli endpoint mock nello stesso processo.
   sensore:
-    url: http://localhost:8080
+    url: http://localhost:${server.port}
   relay:
-    url: http://localhost:8080
+    url: http://localhost:${server.port}
 
   mock-devices:
     enabled: true
@@ -28,6 +28,8 @@ termostato:
   ntfy-url: https://ntfy.sh
   ntfy-topic: sliverd
   debug-mode: false
+  api-keys:
+    - e2e-test-key
 
   config-file: ./data/mock-config.json
   calendario-file: ./data/mock-calendario.json

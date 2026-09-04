@@ -111,6 +111,27 @@ Percorso del file di database **SQLite** utilizzato dal sistema per la persisten
 - Il sistema non richiede alcun server di database esterno: l'intera persistenza è contenuta nel singolo file SQLite.
 - Il parametro viene letto all'avvio e determina il datasource già aperto; per questo `database_path` è un parametro di **bootstrap** e non può essere modificato tramite `PUT /config` senza riavviare l'applicazione.
 
+### 3.8 Autenticazione tramite API-key (`api_keys`)
+
+La configurazione contiene un elenco di chiavi autorizzate:
+
+| Parametro | Tipo | Descrizione |
+|---|---|---|
+| `api_keys` | elenco di stringhe | Insieme delle API-key abilitate per le richieste REST inbound |
+
+Le richieste REST al backend devono presentare la chiave nell'header HTTP:
+
+```http
+X-API-Key: <api-key>
+```
+
+- Se il valore dell'header corrisponde a una delle chiavi presenti in `api_keys`, la richiesta viene elaborata normalmente.
+- Se l'header è assente, vuoto o non corrisponde a una chiave configurata, il backend risponde con **HTTP 401 Unauthorized** e non invoca il controller.
+- L'elenco vuoto è una configurazione **fail-closed**: nessuna richiesta REST autenticata può essere accettata finché non viene configurata almeno una chiave.
+- La protezione si applica a tutti gli endpoint REST esposti dall'applicazione, inclusi gli endpoint Actuator e gli endpoint mock del profilo E2E.
+- `api_keys` è persistito nel file JSON di configurazione e può essere aggiornato tramite `PUT /config` dopo l'autenticazione con una chiave già autorizzata.
+- Le API-key del backend non vengono aggiunte alle chiamate outbound verso il servizio ntfy. Nel profilo mock vengono aggiunte solo alle chiamate interne verso i mock sensore/relay.
+
 ---
 
 ## 4. Integrazioni esterne
@@ -238,6 +259,10 @@ Un processo dedicato viene eseguito **ogni ora** e cancella tutti i record con `
 
 L'applicazione espone una serie di endpoint REST utilizzati da un front-end per la gestione e il monitoraggio del termostato.
 
+### 7.0 Autenticazione delle API REST
+
+Tutti gli endpoint REST del backend richiedono l'header `X-API-Key` con una chiave presente nella configurazione `api_keys`. Una richiesta senza chiave o con chiave non autorizzata restituisce HTTP `401 Unauthorized`.
+
 ### 7.1 Configurazione
 
 | Metodo | Endpoint | Descrizione |
@@ -347,6 +372,8 @@ Lo stato corrente della caldaia utilizzato nella logica di isteresi (zona neutra
 | RF-35 | L'applicazione espone un endpoint REST per consultare i log di errore, con filtro opzionale per range di date; in assenza di parametri restituisce gli errori del giorno corrente |
 | RF-36 | Il sistema utilizza un database SQLite su file, il cui percorso è configurabile tramite il parametro `database_path` |
 | RF-37 | All'avvio il sistema verifica l'esistenza del file di database: se non esiste lo crea (con le directory intermedie) e ne inizializza lo schema; se esiste lo utilizza senza reinizializzare i dati |
+| RF-38 | La configurazione contiene l'elenco `api_keys` delle chiavi autorizzate per le richieste REST inbound |
+| RF-39 | Ogni richiesta REST deve presentare nell'header `X-API-Key` una chiave presente in `api_keys`; in caso di chiave assente o non valida il backend restituisce HTTP 401 Unauthorized |
 
 ---
 

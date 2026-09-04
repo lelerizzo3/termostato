@@ -29,6 +29,6 @@ public class RelayClient {
     }
 
     private RelayHttpApi api() {
-        return factory.createProxy(configuration.current().relayUrl(), RelayHttpApi.class);
+        return factory.createProxy(configuration.current().relayUrl(), RelayHttpApi.class, true);
     }
 }

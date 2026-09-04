@@ -1,6 +1,7 @@
 package com.termostato.domain.model;
 
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.Objects;
 
 public record SystemConfiguration(
@@ -15,7 +16,8 @@ public record SystemConfiguration(
         boolean debugMode,
         String sensoreUrl,
         String relayUrl,
-        String databasePath) {
+        String databasePath,
+        List<String> apiKeys) {
 
     public SystemConfiguration {
         sogliaAttivazione = TemperatureRules.requireNonNegativeOneDecimal("sogliaAttivazione", sogliaAttivazione);
@@ -38,6 +40,40 @@ public record SystemConfiguration(
         sensoreUrl = requireText("sensoreUrl", sensoreUrl);
         relayUrl = requireText("relayUrl", relayUrl);
         databasePath = requireText("databasePath", databasePath);
+        apiKeys = normalizeApiKeys(apiKeys);
+    }
+
+    /** Compatibilità con i costruttori usati dal dominio/test senza autenticazione configurata. */
+    public SystemConfiguration(BigDecimal sogliaAttivazione,
+                               boolean overrideAttivo,
+                               BigDecimal temperaturaOverride,
+                               int intervalloPollingSecondi,
+                               int maxErroriConsecutivi,
+                               int retentionLogGiorni,
+                               String ntfyUrl,
+                               String ntfyTopic,
+                               boolean debugMode,
+                               String sensoreUrl,
+                               String relayUrl,
+                               String databasePath) {
+        this(sogliaAttivazione, overrideAttivo, temperaturaOverride, intervalloPollingSecondi,
+                maxErroriConsecutivi, retentionLogGiorni, ntfyUrl, ntfyTopic, debugMode,
+                sensoreUrl, relayUrl, databasePath, List.of());
+    }
+
+    private static List<String> normalizeApiKeys(List<String> values) {
+        if (values == null) {
+            return List.of();
+        }
+        return values.stream()
+                .map(value -> {
+                    if (value == null || value.isBlank()) {
+                        throw new IllegalArgumentException("apiKeys non può contenere valori vuoti");
+                    }
+                    return value;
+                })
+                .distinct()
+                .toList();
     }
 
     private static String requireText(String field, String value) {

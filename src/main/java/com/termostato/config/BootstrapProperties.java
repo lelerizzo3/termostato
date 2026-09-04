@@ -3,6 +3,8 @@ package com.termostato.config;
 import com.termostato.domain.model.SystemConfiguration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 
@@ -23,6 +25,7 @@ public class BootstrapProperties {
     private String configFile = "./data/config.json";
     private String calendarioFile = "./data/calendario.json";
     private String databasePath = "./data/termostato.db";
+    private List<String> apiKeys = new ArrayList<>();
     private int httpTimeoutMillis = 3000;
     private int schedulerTickMillis = 1000;
 
@@ -44,7 +47,8 @@ public class BootstrapProperties {
                 debugMode,
                 textOrDefault(sensore == null ? null : sensore.getUrl(), "http://sensore.local"),
                 textOrDefault(relay == null ? null : relay.getUrl(), "http://relay.local"),
-                textOrDefault(databasePath, "./data/termostato.db"));
+                textOrDefault(databasePath, "./data/termostato.db"),
+                apiKeys);
     }
 
     private static BigDecimal validTemperature(BigDecimal value, BigDecimal fallback) {
@@ -90,6 +94,8 @@ public class BootstrapProperties {
     public void setCalendarioFile(String value) { this.calendarioFile = value; }
     public String getDatabasePath() { return databasePath; }
     public void setDatabasePath(String value) { this.databasePath = value; }
+    public List<String> getApiKeys() { return apiKeys; }
+    public void setApiKeys(List<String> value) { this.apiKeys = value == null ? new ArrayList<>() : new ArrayList<>(value); }
     public int getHttpTimeoutMillis() { return httpTimeoutMillis; }
     public void setHttpTimeoutMillis(int value) { this.httpTimeoutMillis = value; }
     public int getSchedulerTickMillis() { return schedulerTickMillis; }

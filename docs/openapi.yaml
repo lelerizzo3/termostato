@@ -1,0 +1,916 @@
+openapi: 3.0.3
+info:
+  title: Termostato API
+  description: |
+    Contratto REST inbound del backend del termostato intelligente.
+
+    Tutti gli endpoint richiedono l'header `X-API-Key`. La chiave viene
+    confrontata con l'elenco `api_keys` della configurazione. Una chiave
+    mancante o non valida produce `401 Unauthorized`.
+
+    I nomi JSON seguono la strategia `SNAKE_CASE` configurata nel backend.
+    Le date e i timestamp sono espressi in UTC.
+
+    Gli endpoint `/temperature`, `/relay` e `/mock/*` sono disponibili solo
+    quando è attivo il profilo Spring `mock`; simulano il sensore e il relay
+    per lo scenario E2E. Il client ntfy e gli endpoint configurati per i
+    dispositivi fisici sono integrazioni outbound e non fanno parte di questa
+    specifica inbound.
+  version: 1.0.0
+  contact:
+    name: Team Termostato
+servers:
+  - url: http://localhost:8080
+    description: Istanza locale predefinita (la porta può essere sovrascritta)
+
+security:
+  - ApiKeyAuth: []
+
+tags:
+  - name: Configurazione
+    description: Configurazione runtime e calendario settimanale
+  - name: Log
+    description: Log dei cicli di polling e degli errori
+  - name: Actuator
+    description: Endpoint operativi Spring Boot Actuator
+  - name: Mock
+    description: Endpoint disponibili solo con `termostato.mock-devices.enabled=true`
+
+paths:
+  /config:
+    get:
+      tags: [Configurazione]
+      summary: Legge la configurazione corrente
+      description: Restituisce la configurazione runtime attualmente applicata.
+      operationId: getConfiguration
+      responses:
+        '200':
+          description: Configurazione corrente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemConfiguration'
+              example:
+                soglia_attivazione: 0.3
+                override_attivo: false
+                temperatura_override: null
+                intervallo_polling_secondi: 60
+                max_errori_consecutivi: 3
+                retention_log_giorni: 30
+                ntfy_url: https://ntfy.sh
+                ntfy_topic: sliverd
+                debug_mode: false
+                sensore_url: http://sensore.local
+                relay_url: http://relay.local
+                database_path: ./data/termostato.db
+                api_keys:
+                  - sostituire-con-una-chiave-segreta
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      tags: [Configurazione]
+      summary: Aggiorna la configurazione corrente
+      description: |
+        Sostituisce la configurazione runtime e la persiste nel file JSON.
+        L'aggiornamento è immediato e non richiede il riavvio.
+
+        Il campo `database_path` è bootstrap-only e deve rimanere invariato
+        rispetto al valore usato all'avvio. La richiesta deve contenere una
+        chiave attualmente autorizzata; non è possibile usare questa operazione
+        per aggiungere la prima chiave quando `api_keys` è vuoto.
+      operationId: updateConfiguration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SystemConfiguration'
+            example:
+              soglia_attivazione: 0.3
+              override_attivo: true
+              temperatura_override: 20.5
+              intervallo_polling_secondi: 60
+              max_errori_consecutivi: 3
+              retention_log_giorni: 30
+              ntfy_url: https://ntfy.sh
+              ntfy_topic: sliverd
+              debug_mode: false
+              sensore_url: http://sensore.local
+              relay_url: http://relay.local
+              database_path: ./data/termostato.db
+              api_keys:
+                - sostituire-con-una-chiave-segreta
+      responses:
+        '200':
+          description: Configurazione aggiornata e persistita
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemConfiguration'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /config/calendario:
+    get:
+      tags: [Configurazione]
+      summary: Legge il calendario settimanale
+      description: Restituisce i sette giorni del calendario con gli intervalli configurati.
+      operationId: getCalendar
+      responses:
+        '200':
+          description: Calendario corrente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarDocument'
+              example:
+                giorni:
+                  lunedi: []
+                  martedi: []
+                  mercoledi: []
+                  giovedi:
+                    - ora_inizio: '06:00'
+                      ora_fine: '08:00'
+                      temperatura_target: 20.5
+                  venerdi: []
+                  sabato: []
+                  domenica: []
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+    put:
+      tags: [Configurazione]
+      summary: Aggiorna il calendario settimanale
+      description: |
+        Sostituisce e persiste il calendario. Il payload deve contenere
+        esattamente i sette giorni canonici. Gli intervalli dello stesso giorno
+        non possono sovrapporsi e `ora_inizio` deve precedere `ora_fine`.
+        Gli orari sono interpretati in UTC; la fine dell'intervallo è esclusa.
+      operationId: updateCalendar
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CalendarDocument'
+            example:
+              giorni:
+                lunedi: []
+                martedi: []
+                mercoledi: []
+                giovedi:
+                  - ora_inizio: '06:00'
+                    ora_fine: '08:00'
+                    temperatura_target: 20.5
+                venerdi: []
+                sabato: []
+                domenica: []
+      responses:
+        '200':
+          description: Calendario aggiornato e persistito
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarDocument'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /log:
+    get:
+      tags: [Log]
+      summary: Legge il log dei cicli di polling
+      description: |
+        Restituisce i record ordinati per timestamp crescente. Senza parametri
+        viene usato il giorno corrente in UTC. `da` e `a` sono inclusivi a
+        livello di data: il range effettivo è `[da 00:00:00Z, a + 1 giorno
+        00:00:00Z)`.
+      operationId: getPollingLogs
+      parameters:
+        - $ref: '#/components/parameters/FromDate'
+        - $ref: '#/components/parameters/ToDate'
+      responses:
+        '200':
+          description: Record del log di polling
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PollingLogRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /log/errori:
+    get:
+      tags: [Log]
+      summary: Legge il log degli errori
+      description: |
+        Restituisce gli errori ordinati per timestamp crescente. I parametri
+        hanno la stessa semantica di `GET /log` e sono interpretati in UTC.
+      operationId: getErrorLogs
+      parameters:
+        - $ref: '#/components/parameters/FromDate'
+        - $ref: '#/components/parameters/ToDate'
+      responses:
+        '200':
+          description: Record del log degli errori
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ErrorLogRecord'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /actuator/health:
+    get:
+      tags: [Actuator]
+      summary: Verifica lo stato applicativo
+      description: Endpoint Spring Boot Actuator esposto dalla configurazione applicativa.
+      operationId: getHealth
+      responses:
+        '200':
+          description: Stato applicativo disponibile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActuatorHealth'
+              example:
+                status: UP
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /actuator/info:
+    get:
+      tags: [Actuator]
+      summary: Legge le informazioni applicative
+      description: Endpoint Spring Boot Actuator `info`, esposto ma senza dettagli custom obbligatori.
+      operationId: getActuatorInfo
+      responses:
+        '200':
+          description: Informazioni applicative; può essere un oggetto vuoto
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+              example: {}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /actuator/metrics:
+    get:
+      tags: [Actuator]
+      summary: Elenca i nomi delle metriche
+      operationId: listMetrics
+      responses:
+        '200':
+          description: Nomi delle metriche disponibili
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActuatorMetricNames'
+              example:
+                names:
+                  - jvm.memory.used
+                  - process.uptime
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /actuator/metrics/{requiredMetricName}:
+    get:
+      tags: [Actuator]
+      summary: Legge una metrica
+      operationId: getMetric
+      parameters:
+        - name: requiredMetricName
+          in: path
+          required: true
+          description: Nome della metrica restituito da `GET /actuator/metrics`.
+          schema:
+            type: string
+          example: process.uptime
+      responses:
+        '200':
+          description: Valore e misurazioni della metrica
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActuatorMetric'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Metrica inesistente
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /temperature:
+    get:
+      tags: [Mock]
+      summary: Legge la temperatura simulata
+      description: |
+        Disponibile solo con il profilo `mock`. È il contratto usato dal client
+        interno del sensore; in produzione questo endpoint è sostituito dall'URL
+        del dispositivo configurato in `sensore_url`.
+      operationId: getMockTemperature
+      responses:
+        '200':
+          description: Temperatura corrente del sensore simulato
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemperatureReading'
+              example:
+                temperatura: 19.0
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Profilo mock non attivo
+
+  /relay:
+    get:
+      tags: [Mock]
+      summary: Legge lo stato del relay simulato
+      description: Disponibile solo con il profilo `mock`.
+      operationId: getMockRelayState
+      responses:
+        '200':
+          description: Stato corrente del relay simulato
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RelayStateResponse'
+              example:
+                acceso: false
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Profilo mock non attivo
+    post:
+      tags: [Mock]
+      summary: Invia un comando al relay simulato
+      description: Disponibile solo con il profilo `mock`; aggiorna lo stato mantenuto dal dispositivo simulato.
+      operationId: commandMockRelay
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RelayCommand'
+            examples:
+              accensione:
+                value:
+                  acceso: true
+              spegnimento:
+                value:
+                  acceso: false
+      responses:
+        '204':
+          description: Comando applicato; nessun body nella risposta
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Profilo mock non attivo
+
+  /mock/temperature:
+    put:
+      tags: [Mock]
+      summary: Imposta la temperatura simulata
+      description: Disponibile solo con il profilo `mock`; endpoint di controllo dello scenario E2E.
+      operationId: setMockTemperature
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TemperatureReading'
+            example:
+              temperatura: 21.0
+      responses:
+        '200':
+          description: Nuova lettura del sensore simulato
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TemperatureReading'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Profilo mock non attivo
+
+  /mock/state:
+    get:
+      tags: [Mock]
+      summary: Legge lo stato completo del dispositivo simulato
+      description: Disponibile solo con il profilo `mock`; utile per le asserzioni E2E.
+      operationId: getMockState
+      responses:
+        '200':
+          description: Temperatura e stato relay simulati
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MockStateResponse'
+              example:
+                temperatura: 19.0
+                relay_acceso: false
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Profilo mock non attivo
+
+  /mock/reset:
+    post:
+      tags: [Mock]
+      summary: Ripristina lo stato iniziale del mock
+      description: Disponibile solo con il profilo `mock`; ripristina temperatura e relay dai valori di configurazione del mock.
+      operationId: resetMockState
+      responses:
+        '200':
+          description: Stato mock ripristinato
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MockStateResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Profilo mock non attivo
+
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API-key autorizzata nella configurazione `api_keys`.
+
+  parameters:
+    FromDate:
+      name: da
+      in: query
+      required: false
+      description: 'Data iniziale inclusiva in UTC. Default: giorno corrente UTC, oppure il valore di `a` se `da` è assente.'
+      schema:
+        type: string
+        format: date
+      example: '2026-09-01'
+    ToDate:
+      name: a
+      in: query
+      required: false
+      description: 'Data finale inclusiva in UTC. Default: giorno corrente UTC.'
+      schema:
+        type: string
+        format: date
+      example: '2026-09-04'
+
+  responses:
+    Unauthorized:
+      description: API-key assente, vuota o non autorizzata
+      headers:
+        WWW-Authenticate:
+          description: Schema di autenticazione richiesto dal backend
+          schema:
+            type: string
+            example: ApiKey
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/UnauthorizedError'
+          example:
+            error: API key mancante o non valida
+    BadRequest:
+      description: Body o parametri non validi
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            timestamp: '2026-09-04T10:00:00Z'
+            status: 400
+            error: Bad Request
+            message: Il parametro da non può essere successivo al parametro a
+    InternalServerError:
+      description: Errore interno o impossibilità di persistere la modifica
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiError'
+          example:
+            timestamp: '2026-09-04T10:00:00Z'
+            status: 500
+            error: Internal Server Error
+            message: Errore interno del server
+
+  schemas:
+    SystemConfiguration:
+      type: object
+      description: |
+        Configurazione runtime completa. I valori numerici di temperatura
+        devono avere una sola cifra decimale. Se `override_attivo` è true,
+        `temperatura_override` è obbligatoria; se è false può essere null.
+      additionalProperties: false
+      required:
+        - soglia_attivazione
+        - override_attivo
+        - temperatura_override
+        - intervallo_polling_secondi
+        - max_errori_consecutivi
+        - retention_log_giorni
+        - ntfy_url
+        - ntfy_topic
+        - debug_mode
+        - sensore_url
+        - relay_url
+        - database_path
+        - api_keys
+      properties:
+        soglia_attivazione:
+          type: number
+          format: double
+          minimum: 0
+          multipleOf: 0.1
+          description: Isteresi di attivazione in °C.
+          example: 0.3
+        override_attivo:
+          type: boolean
+          description: Abilita l'override manuale del target calendario.
+          example: false
+        temperatura_override:
+          type: number
+          format: double
+          nullable: true
+          multipleOf: 0.1
+          description: Target manuale in °C; obbligatorio quando `override_attivo` è true.
+          example: 20.5
+        intervallo_polling_secondi:
+          type: integer
+          format: int32
+          minimum: 1
+          description: Intervallo del ciclo di controllo in secondi.
+          example: 60
+        max_errori_consecutivi:
+          type: integer
+          format: int32
+          minimum: 1
+          description: Soglia di errori consecutivi prima della messa in sicurezza.
+          example: 3
+        retention_log_giorni:
+          type: integer
+          format: int32
+          minimum: 1
+          description: Giorni di conservazione dei log.
+          example: 30
+        ntfy_url:
+          type: string
+          format: uri
+          minLength: 1
+          description: URL base del servizio ntfy.
+          example: https://ntfy.sh
+        ntfy_topic:
+          type: string
+          minLength: 1
+          description: Topic ntfy usato per le notifiche.
+          example: sliverd
+        debug_mode:
+          type: boolean
+          description: Abilita le notifiche informative di accensione e spegnimento.
+          example: false
+        sensore_url:
+          type: string
+          format: uri
+          minLength: 1
+          description: URL base del sensore REST esterno.
+          example: http://sensore.local
+        relay_url:
+          type: string
+          format: uri
+          minLength: 1
+          description: URL base del relay REST esterno.
+          example: http://relay.local
+        database_path:
+          type: string
+          minLength: 1
+          description: Percorso del database SQLite; bootstrap-only.
+          example: ./data/termostato.db
+        api_keys:
+          type: array
+          uniqueItems: true
+          description: Elenco delle API-key autorizzate. Lista vuota significa fail-closed.
+          items:
+            type: string
+            minLength: 1
+          example:
+            - e2e-test-key
+
+    CalendarDocument:
+      type: object
+      description: Calendario settimanale con esattamente i sette giorni canonici.
+      additionalProperties: false
+      required: [giorni]
+      properties:
+        giorni:
+          type: object
+          additionalProperties: false
+          required:
+            - lunedi
+            - martedi
+            - mercoledi
+            - giovedi
+            - venerdi
+            - sabato
+            - domenica
+          properties:
+            lunedi:
+              $ref: '#/components/schemas/CalendarIntervals'
+            martedi:
+              $ref: '#/components/schemas/CalendarIntervals'
+            mercoledi:
+              $ref: '#/components/schemas/CalendarIntervals'
+            giovedi:
+              $ref: '#/components/schemas/CalendarIntervals'
+            venerdi:
+              $ref: '#/components/schemas/CalendarIntervals'
+            sabato:
+              $ref: '#/components/schemas/CalendarIntervals'
+            domenica:
+              $ref: '#/components/schemas/CalendarIntervals'
+
+    CalendarIntervals:
+      type: array
+      description: Intervalli ordinati automaticamente per ora di inizio e non sovrapposti.
+      items:
+        $ref: '#/components/schemas/TimeInterval'
+
+    TimeInterval:
+      type: object
+      additionalProperties: false
+      required:
+        - ora_inizio
+        - ora_fine
+        - temperatura_target
+      properties:
+        ora_inizio:
+          type: string
+          description: Ora UTC di inizio, inclusiva. Sono accettati `HH:mm` e `HH:mm:ss`.
+          pattern: '^(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9](?:\.[0-9]{1,9})?)?$'
+          example: '06:00'
+        ora_fine:
+          type: string
+          description: Ora UTC di fine, esclusiva; deve essere successiva a `ora_inizio`.
+          pattern: '^(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9](?:\.[0-9]{1,9})?)?$'
+          example: '08:00'
+        temperatura_target:
+          type: number
+          format: double
+          multipleOf: 0.1
+          description: Temperatura target in °C con una cifra decimale.
+          example: 20.5
+
+    TemperatureReading:
+      type: object
+      additionalProperties: false
+      required: [temperatura]
+      properties:
+        temperatura:
+          type: number
+          format: double
+          description: Temperatura in °C, normalizzata a una cifra decimale.
+          example: 19.0
+
+    RelayCommand:
+      type: object
+      additionalProperties: false
+      required: [acceso]
+      properties:
+        acceso:
+          type: boolean
+          description: '`true` accende il relay; `false` lo spegne.'
+          example: true
+
+    RelayStateResponse:
+      type: object
+      additionalProperties: false
+      required: [acceso]
+      properties:
+        acceso:
+          type: boolean
+          description: Stato corrente del relay.
+          example: false
+
+    MockStateResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - temperatura
+        - relay_acceso
+      properties:
+        temperatura:
+          type: number
+          format: double
+          description: Temperatura corrente del dispositivo simulato in °C.
+          example: 19.0
+        relay_acceso:
+          type: boolean
+          description: Stato corrente del relay simulato.
+          example: false
+
+    PollingLogRecord:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - data_ora
+        - caldaia_accesa
+        - temperatura_rilevata
+        - temperatura_target
+        - override_attivo
+        - temperatura_override
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 42
+        data_ora:
+          type: string
+          format: date-time
+          description: Timestamp del ciclo in UTC.
+          example: '2026-09-04T10:00:00.000000000Z'
+        caldaia_accesa:
+          type: boolean
+          example: true
+        temperatura_rilevata:
+          type: number
+          format: double
+          example: 19.0
+        temperatura_target:
+          type: number
+          format: double
+          nullable: true
+          description: Target risolto; null quando non è attivo alcun intervallo o override.
+          example: 20.5
+        override_attivo:
+          type: boolean
+          example: false
+        temperatura_override:
+          type: number
+          format: double
+          nullable: true
+          example: null
+
+    ErrorLogRecord:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - data_ora
+        - tipo_errore
+        - caldaia_accesa
+        - temperatura_rilevata
+        - num_errori_consecutivi
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 7
+        data_ora:
+          type: string
+          format: date-time
+          description: Timestamp dell'errore in UTC.
+          example: '2026-09-04T10:00:00.000000000Z'
+        tipo_errore:
+          type: string
+          description: Categoria tecnica dell'errore.
+          example: READ_TEMP
+        caldaia_accesa:
+          type: boolean
+          nullable: true
+          description: Stato della caldaia se disponibile.
+          example: false
+        temperatura_rilevata:
+          type: number
+          format: double
+          nullable: true
+          description: Ultima temperatura disponibile, se presente.
+          example: null
+        num_errori_consecutivi:
+          type: integer
+          format: int32
+          minimum: 1
+          example: 1
+
+    ApiError:
+      type: object
+      additionalProperties: false
+      required: [timestamp, status, error, message]
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          description: Istante UTC della risposta di errore.
+        status:
+          type: integer
+          format: int32
+          example: 400
+        error:
+          type: string
+          example: Bad Request
+        message:
+          type: string
+          example: Payload non valido
+
+    UnauthorizedError:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+          example: API key mancante o non valida
+
+    ActuatorHealth:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          description: Stato aggregato dell'applicazione.
+          enum: [UP, DOWN, OUT_OF_SERVICE, UNKNOWN]
+          example: UP
+      additionalProperties: true
+
+    ActuatorMetricNames:
+      type: object
+      required: [names]
+      properties:
+        names:
+          type: array
+          items:
+            type: string
+          example: [jvm.memory.used, process.uptime]
+
+    ActuatorMetric:
+      type: object
+      required: [name, measurements]
+      properties:
+        name:
+          type: string
+          example: process.uptime
+        description:
+          type: string
+          nullable: true
+          example: The uptime of the Java Virtual Machine
+        baseUnit:
+          type: string
+          nullable: true
+          example: seconds
+        measurements:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActuatorMeasurement'
+        availableTags:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+      additionalProperties: true
+
+    ActuatorMeasurement:
+      type: object
+      required: [statistic, value]
+      properties:
+        statistic:
+          type: string
+          example: VALUE
+        value:
+          type: number
+          format: double
+          example: 123.45

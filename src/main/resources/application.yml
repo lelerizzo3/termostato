@@ -28,7 +28,8 @@ termostato:
     url: http://relay.local
   config-file: ./data/config.json
   calendario-file: ./data/calendario.json
-  database-path: ./data/termostato.db
+  # Lista API key autorizzate per tutte le API REST inbound (fail-closed se vuota)
+  api-keys: []
   http-timeout-millis: 3000
   scheduler-tick-millis: 1000
 
