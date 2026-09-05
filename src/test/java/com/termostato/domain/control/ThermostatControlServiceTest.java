@@ -8,6 +8,9 @@ import com.termostato.domain.model.SystemConfiguration;
 import com.termostato.external.notification.NotificationService;
 import com.termostato.external.relay.RelayClient;
 import com.termostato.external.temperature.TemperatureClient;
+import com.termostato.external.temperature.TemperatureReading;
+import com.termostato.external.weather.ExternalWeatherClient;
+import com.termostato.external.weather.WeatherReading;
 import com.termostato.persistence.ErrorLogRepository;
 import com.termostato.persistence.PollingLogRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -35,6 +38,7 @@ class ThermostatControlServiceTest {
 
     @Mock ConfigurationService configuration;
     @Mock TemperatureClient temperatureClient;
+    @Mock ExternalWeatherClient externalWeatherClient;
     @Mock RelayClient relayClient;
     @Mock NotificationService notificationService;
     @Mock PollingLogRepository pollingLogs;
@@ -62,13 +66,13 @@ class ThermostatControlServiceTest {
         when(configuration.current()).thenReturn(config);
         lenient().when(configuration.currentCalendario()).thenReturn(calendar);
         service = new ThermostatControlService(configuration, resolver, calculator, errors,
-                temperatureClient, relayClient, notificationService, pollingLogs, errorLogs, clock);
+                temperatureClient, externalWeatherClient, relayClient, notificationService, pollingLogs, errorLogs, clock);
     }
 
     @Test
     void leggeRelayAllAvvioEUsaIlRelayPerLaZonaNeutra() {
         when(relayClient.leggiStato()).thenReturn(true);
-        when(temperatureClient.leggiTemperatura()).thenReturn(new BigDecimal("20.3"));
+        when(temperatureClient.leggiLettura()).thenReturn(new TemperatureReading(new BigDecimal("20.3"), new BigDecimal("50.0")));
 
         service.initializeRelayAtStartup();
         service.executePollingCycle();
@@ -82,7 +86,7 @@ class ThermostatControlServiceTest {
     void assenzaTargetInviaSpegnimentoSeRelayAcceso() {
         when(configuration.currentCalendario()).thenReturn(Calendario.vuoto());
         when(relayClient.leggiStato()).thenReturn(true, true);
-        when(temperatureClient.leggiTemperatura()).thenReturn(new BigDecimal("21.0"));
+        when(temperatureClient.leggiLettura()).thenReturn(new TemperatureReading(new BigDecimal("21.0"), new BigDecimal("50.0")));
 
         service.initializeRelayAtStartup();
         service.executePollingCycle();
@@ -94,7 +98,7 @@ class ThermostatControlServiceTest {
     @Test
     void raggiuntaSogliaErroriTentaSpegnimentoDiSicurezza() {
         when(relayClient.leggiStato()).thenReturn(false);
-        when(temperatureClient.leggiTemperatura()).thenThrow(new RuntimeException("timeout"));
+        when(temperatureClient.leggiLettura()).thenThrow(new RuntimeException("timeout"));
 
         service.initializeRelayAtStartup();
         service.executePollingCycle();

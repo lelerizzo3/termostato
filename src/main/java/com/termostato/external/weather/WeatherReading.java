@@ -1,11 +1,14 @@
-package com.termostato.external.temperature;
+package com.termostato.external.weather;
 
 import com.termostato.domain.model.TemperatureRules;
 
 import java.math.BigDecimal;
 
-public record TemperatureReading(BigDecimal temperatura, BigDecimal umidita) {
-    public TemperatureReading {
+public record WeatherReading(
+        BigDecimal temperatura,
+        BigDecimal umidita) {
+
+    public WeatherReading {
         temperatura = TemperatureRules.normalizeMeasured(temperatura);
         umidita = TemperatureRules.normalizeHumidity(umidita);
     }

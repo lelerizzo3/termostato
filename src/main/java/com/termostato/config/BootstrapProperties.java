@@ -26,6 +26,10 @@ public class BootstrapProperties {
     private String calendarioFile = "./data/calendario.json";
     private String databasePath = "./data/termostato.db";
     private List<String> apiKeys = new ArrayList<>();
+    private String meteoEsternoUrl = SystemConfiguration.DEFAULT_METEO_ESTERNO_URL;
+    private BigDecimal meteoEsternoLatitudine = SystemConfiguration.DEFAULT_METEO_ESTERNO_LATITUDINE;
+    private BigDecimal meteoEsternoLongitudine = SystemConfiguration.DEFAULT_METEO_ESTERNO_LONGITUDINE;
+    private boolean notificheErroriAbilitate = SystemConfiguration.DEFAULT_NOTIFICHE_ERRORI_ABILITATE;
     private int httpTimeoutMillis = 3000;
     private int schedulerTickMillis = 1000;
 
@@ -48,7 +52,11 @@ public class BootstrapProperties {
                 textOrDefault(sensore == null ? null : sensore.getUrl(), "http://sensore.local"),
                 textOrDefault(relay == null ? null : relay.getUrl(), "http://relay.local"),
                 textOrDefault(databasePath, "./data/termostato.db"),
-                apiKeys);
+                apiKeys,
+                textOrDefault(meteoEsternoUrl, SystemConfiguration.DEFAULT_METEO_ESTERNO_URL),
+                meteoEsternoLatitudine,
+                meteoEsternoLongitudine,
+                notificheErroriAbilitate);
     }
 
     private static BigDecimal validTemperature(BigDecimal value, BigDecimal fallback) {
@@ -96,6 +104,14 @@ public class BootstrapProperties {
     public void setDatabasePath(String value) { this.databasePath = value; }
     public List<String> getApiKeys() { return apiKeys; }
     public void setApiKeys(List<String> value) { this.apiKeys = value == null ? new ArrayList<>() : new ArrayList<>(value); }
+    public String getMeteoEsternoUrl() { return meteoEsternoUrl; }
+    public void setMeteoEsternoUrl(String value) { this.meteoEsternoUrl = value; }
+    public BigDecimal getMeteoEsternoLatitudine() { return meteoEsternoLatitudine; }
+    public void setMeteoEsternoLatitudine(BigDecimal value) { this.meteoEsternoLatitudine = value; }
+    public BigDecimal getMeteoEsternoLongitudine() { return meteoEsternoLongitudine; }
+    public void setMeteoEsternoLongitudine(BigDecimal value) { this.meteoEsternoLongitudine = value; }
+    public boolean isNotificheErroriAbilitate() { return notificheErroriAbilitate; }
+    public void setNotificheErroriAbilitate(boolean value) { this.notificheErroriAbilitate = value; }
     public int getHttpTimeoutMillis() { return httpTimeoutMillis; }
     public void setHttpTimeoutMillis(int value) { this.httpTimeoutMillis = value; }
     public int getSchedulerTickMillis() { return schedulerTickMillis; }

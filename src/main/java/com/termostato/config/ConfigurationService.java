@@ -104,19 +104,38 @@ public class ConfigurationService implements InitializingBean {
             String rawJson = Files.readString(path, StandardCharsets.UTF_8);
             SystemConfiguration loaded = jsonMapper.readValue(rawJson, SystemConfiguration.class);
             boolean apiKeysMissing = !rawJson.contains("\"api_keys\"") && !rawJson.contains("\"apiKeys\"");
+            boolean meteoUrlMissing = !rawJson.contains("\"meteo_esterno_url\"")
+                    && !rawJson.contains("\"meteoEsternoUrl\"");
+            boolean meteoLatitudineMissing = !rawJson.contains("\"meteo_esterno_latitudine\"")
+                    && !rawJson.contains("\"meteoEsternoLatitudine\"");
+            boolean meteoLongitudineMissing = !rawJson.contains("\"meteo_esterno_longitudine\"")
+                    && !rawJson.contains("\"meteoEsternoLongitudine\"");
+            boolean notificheErroriMissing = !rawJson.contains("\"notifiche_errori_abilitate\"")
+                    && !rawJson.contains("\"notificheErroriAbilitate\"");
+            boolean newConfigurationFieldsMissing = apiKeysMissing || meteoUrlMissing
+                    || meteoLatitudineMissing || meteoLongitudineMissing || notificheErroriMissing;
             var effectiveApiKeys = apiKeysMissing ? defaults.apiKeys() : loaded.apiKeys();
+            var effectiveMeteoUrl = meteoUrlMissing ? defaults.meteoEsternoUrl() : loaded.meteoEsternoUrl();
+            var effectiveMeteoLatitudine = meteoLatitudineMissing
+                    ? defaults.meteoEsternoLatitudine() : loaded.meteoEsternoLatitudine();
+            var effectiveMeteoLongitudine = meteoLongitudineMissing
+                    ? defaults.meteoEsternoLongitudine() : loaded.meteoEsternoLongitudine();
+            var effectiveNotificheErrori = notificheErroriMissing
+                    ? defaults.notificheErroriAbilitate() : loaded.notificheErroriAbilitate();
             // Il path del database determina il datasource prima del caricamento JSON: resta bootstrap-only.
-            if (!defaults.databasePath().equals(loaded.databasePath()) || apiKeysMissing) {
+            if (!defaults.databasePath().equals(loaded.databasePath()) || newConfigurationFieldsMissing) {
                 loaded = new SystemConfiguration(
                         loaded.sogliaAttivazione(), loaded.overrideAttivo(), loaded.temperaturaOverride(),
                         loaded.intervalloPollingSecondi(), loaded.maxErroriConsecutivi(), loaded.retentionLogGiorni(),
                         loaded.ntfyUrl(), loaded.ntfyTopic(), loaded.debugMode(), loaded.sensoreUrl(),
-                        loaded.relayUrl(), defaults.databasePath(), effectiveApiKeys);
-                if (apiKeysMissing) {
+                        loaded.relayUrl(), defaults.databasePath(), effectiveApiKeys,
+                        effectiveMeteoUrl, effectiveMeteoLatitudine, effectiveMeteoLongitudine,
+                        effectiveNotificheErrori);
+                if (newConfigurationFieldsMissing) {
                     try {
                         writeJson(path, loaded);
                     } catch (RuntimeException migrationFailure) {
-                        log.warn("Impossibile migrare api_keys nel file {}: uso il valore in memoria", path,
+                        log.warn("Impossibile migrare i nuovi campi nel file {}: uso i valori in memoria", path,
                                 migrationFailure);
                     }
                 }

@@ -2,7 +2,7 @@
 
 ## 1. Descrizione generale
 
-Il sistema gestisce un termostato domestico con programmazione settimanale. Legge periodicamente la temperatura ambiente e decide se attivare o disattivare la caldaia in base alla programmazione oraria configurata o a un'impostazione manuale di override. All'avvio, il sistema legge lo stato attuale del relay della caldaia direttamente dal dispositivo fisico, così da poter riprendere la logica di controllo senza assumere alcuno stato iniziale.
+Il sistema gestisce un termostato domestico con programmazione settimanale. Legge periodicamente temperatura e umidità ambiente dallo stesso sensore e decide se attivare o disattivare la caldaia in base alla programmazione oraria configurata o a un'impostazione manuale di override. Acquisisce inoltre temperatura e umidità esterne tramite un servizio meteo REST pubblico. All'avvio, il sistema legge lo stato attuale del relay della caldaia direttamente dal dispositivo fisico, così da poter riprendere la logica di controllo senza assumere alcuno stato iniziale.
 
 ---
 
@@ -70,7 +70,7 @@ Quando `override_attivo` è `true`, il sistema ignora completamente il calendari
 
 ### 3.3 Frequenza di polling (`intervallo_polling_secondi`)
 
-Valore intero positivo che indica ogni quanti secondi il sistema esegue il ciclo di controllo: lettura della temperatura ambiente, calcolo della temperatura target e decisione sullo stato della caldaia.
+Valore intero positivo che indica ogni quanti secondi il sistema esegue il ciclo di controllo: lettura di temperatura e umidità interne, acquisizione best-effort del meteo esterno, calcolo della temperatura target e decisione sullo stato della caldaia.
 
 - Unità: secondi
 - Valore di esempio: `60`
@@ -98,8 +98,23 @@ Valore intero positivo che indica il numero di giorni per cui i record di log ve
 | `ntfy_url` | stringa | URL base del servizio ntfy (es. `https://ntfy.sh`) |
 | `ntfy_topic` | stringa | Topic ntfy a cui inviare i messaggi (valore corrente: `sliverd`) |
 | `debug_mode` | booleano | Se `true`, invia messaggi informativi di accensione/spegnimento caldaia tramite ntfy |
+| `notifiche_errori_abilitate` | booleano | Se `true`, abilita l'invio tramite ntfy delle notifiche di errore; default `true` |
 
-Quando `debug_mode = false`, vengono inviati solo i messaggi di errore. Quando `debug_mode = true`, vengono inviati anche i messaggi informativi relativi alle azioni di accensione e spegnimento della caldaia.
+Quando `debug_mode = false`, non vengono inviati messaggi informativi di accensione/spegnimento. Le notifiche di errore vengono inviate solo se `notifiche_errori_abilitate = true`, indipendentemente da `debug_mode`.
+
+#### 3.6.1 Meteo esterno
+
+Il sistema acquisisce temperatura e umidità esterne tramite un client REST verso un servizio pubblico, con Open-Meteo come implementazione predefinita.
+
+| Parametro | Tipo | Default | Descrizione |
+|---|---|---|---|
+| `meteo_esterno_url` | stringa | `https://api.open-meteo.com` | URL base del servizio meteo pubblico |
+| `meteo_esterno_latitudine` | decimale | `37.6167` | Latitudine del punto di rilevazione; default centro di Acireale (Catania) |
+| `meteo_esterno_longitudine` | decimale | `15.1667` | Longitudine del punto di rilevazione; default centro di Acireale (Catania) |
+
+Le coordinate sono parametri di configurazione e possono essere sostituite per usare un’altra città. Il client richiede le variabili correnti `temperature_2m` e `relative_humidity_2m`, con timezone UTC. Le misure esterne sono normalizzate a una cifra decimale.
+
+In caso di errore del servizio pubblico, il controllo locale sensore/relay continua; il ciclo registra un errore, può inviare la relativa notifica se abilitata e salva le misure esterne come non disponibili nel log di polling.
 
 ### 3.7 Percorso del database (`database_path`)
 
@@ -136,17 +151,27 @@ X-API-Key: <api-key>
 
 ## 4. Integrazioni esterne
 
-Il sistema non legge direttamente sensori hardware né comanda direttamente il relay della caldaia. Tutte le interazioni con il mondo fisico avvengono tramite **API REST esterne**. Il sistema dispone di due client REST dedicati: uno per il sensore di temperatura e uno per il relay della caldaia.
+Il sistema non legge direttamente sensori hardware né comanda direttamente il relay della caldaia. Tutte le interazioni con il mondo fisico avvengono tramite **API REST esterne**. Il sistema dispone di tre client REST dedicati: uno per il sensore interno di temperatura e umidità, uno per il relay della caldaia e uno per il servizio meteo esterno pubblico.
 
-### 4.1 Client lettura temperatura
+### 4.1 Client lettura temperatura e umidità interne
 
-La temperatura ambiente viene acquisita tramite una chiamata a un'API REST esposta da un dispositivo esterno (es. sensore smart, microcontrollore con endpoint HTTP).
+La temperatura e l'umidità ambiente vengono acquisite tramite una singola chiamata a un'API REST esposta dallo stesso sensore (es. sensore smart, microcontrollore con endpoint HTTP).
 
-- Il client viene invocato ad ogni ciclo di polling
-- Restituisce il valore di temperatura corrente in gradi Celsius
-- L'endpoint di destinazione è configurabile
+- Il client viene invocato a ogni ciclo di polling e a ogni richiesta `GET /stato`.
+- La risposta del sensore contiene entrambe le proprietà `temperatura` e `umidita`.
+- La temperatura è espressa in °C e l'umidità relativa in percentuale; entrambe sono normalizzate a una cifra decimale.
+- L'endpoint di destinazione è configurabile.
 
-### 4.2 Client relay caldaia
+### 4.2 Client meteo esterno
+
+Il client meteo effettua una richiesta GET al servizio pubblico configurato, con i parametri `latitude`, `longitude`, `current=temperature_2m,relative_humidity_2m` e `timezone=UTC`. L'implementazione predefinita usa Open-Meteo e il punto di Acireale (Catania).
+
+- Viene invocato a ogni ciclo di polling e a ogni richiesta `GET /stato`.
+- Restituisce temperatura e umidità relativa esterne, entrambe a una cifra decimale.
+- Non richiede una API-key per l'endpoint pubblico Open-Meteo.
+- Un errore del meteo esterno non interrompe il controllo locale: viene registrato come errore non di sicurezza e i campi esterni del log di polling restano null.
+
+### 4.3 Client relay caldaia
 
 Il client relay espone due operazioni verso la stessa API REST del dispositivo di controllo (es. relay smart, microcontrollore con endpoint HTTP):
 
@@ -163,28 +188,29 @@ Il client relay espone due operazioni verso la stessa API REST del dispositivo d
 
 > Lo stato della caldaia **non viene mai memorizzato in RAM** dal sistema. La fonte di verità è esclusivamente il relay fisico: ad ogni decisione che richiede lo stato attuale, esso viene letto tramite l'operazione di lettura del client relay.
 
-### 4.3 Comportamento in caso di errore delle API
+### 4.4 Comportamento in caso di errore delle API
 
 In caso di errore di comunicazione con le API esterne (timeout, errore HTTP, risposta non valida) il sistema:
 
-1. **Invia una notifica** che descrive il tipo di errore, ad esempio:
+1. **Invia una notifica**, se `notifiche_errori_abilitate = true`, che descrive il tipo di errore, ad esempio:
    - "Impossibile leggere la temperatura dal sensore"
    - "Impossibile inviare il comando di accensione alla caldaia"
+   - "Impossibile leggere temperatura e umidità esterne"
    - "Impossibile inviare il comando di spegnimento alla caldaia"
 
-2. **Conta gli errori consecutivi** per ciascuna categoria di errore. Quando il contatore raggiunge la soglia configurata (`max_errori_consecutivi`), il sistema **mette in sicurezza la caldaia spegnendola**.
+2. **Conta gli errori consecutivi** per ciascuna categoria di errore. Per gli errori del sensore interno, della lettura relay e dei comandi di accensione, quando il contatore raggiunge la soglia configurata (`max_errori_consecutivi`), il sistema **mette in sicurezza la caldaia spegnendola**. L'errore di lettura del meteo esterno viene registrato ma non interrompe il controllo locale e non applica la soglia di sicurezza.
 
 3. **Caso speciale — errore di spegnimento caldaia**: se l'errore riguarda proprio il comando di spegnimento, il sistema non applica la soglia ma tenta lo spegnimento **ad ogni ciclo di polling**, inviando una notifica di errore ad ogni tentativo fallito, finché l'operazione non ha successo.
 
-### 4.4 Client notifiche (ntfy)
+### 4.5 Client notifiche (ntfy)
 
 Le notifiche vengono inviate tramite il servizio **[ntfy](https://ntfy.sh)**, che recapita i messaggi all'app ntfy su iPhone. Il client è strutturato in modo analogo ai client del relay e del termometro.
 
 Il client invia messaggi di due tipi:
 
 **Messaggi di errore**
-- Inviati ogni volta che si verifica un errore di comunicazione con le API esterne
-- Inviati sempre, indipendentemente dal valore di `debug_mode`
+- Inviati ogni volta che si verifica un errore di comunicazione con le API esterne solo se `notifiche_errori_abilitate = true`
+- Non dipendono da `debug_mode`; quando il flag è `false` non viene inviata alcuna notifica di errore
 - Priorità: alta (errore)
 - Esempio: "Impossibile leggere la temperatura dal sensore"
 
@@ -201,6 +227,7 @@ Parametri di configurazione relativi alle notifiche:
 | `ntfy_url` | stringa | URL base del servizio ntfy (es. `https://ntfy.sh`) |
 | `ntfy_topic` | stringa | Topic ntfy a cui inviare i messaggi (valore corrente: `sliverd`) |
 | `debug_mode` | booleano | Se `true`, abilita l'invio dei messaggi informativi di accensione/spegnimento |
+| `notifiche_errori_abilitate` | booleano | Se `true`, abilita l'invio dei messaggi di errore; non modifica i messaggi informativi |
 
 ---
 
@@ -226,10 +253,13 @@ Ad ogni ciclo di polling il sistema registra su database uno snapshot dello stat
 |---|---|---|---|
 | `data_ora` | timestamp | sì | Data e ora esatta del ciclo di polling |
 | `caldaia_accesa` | booleano | sì | `true` se la caldaia era accesa al momento del rilevamento |
-| `temperatura_rilevata` | decimale | sì | Temperatura ambiente letta tramite API, in °C con una cifra decimale |
-| `temperatura_target` | decimale | sì | Temperatura target calcolata (da calendario o override) |
+| `temperatura_rilevata` | decimale | sì | Temperatura interna letta tramite API, in °C con una cifra decimale |
+| `umidita_rilevata` | decimale | sì | Umidità interna letta dallo stesso sensore, in percentuale con una cifra decimale |
+| `temperatura_target` | decimale | no | Temperatura target calcolata; null se non è attivo alcun intervallo o override |
 | `override_attivo` | booleano | sì | `true` se in quel momento era attivo l'override manuale |
 | `temperatura_override` | decimale | no | Temperatura di override impostata; valorizzato solo se `override_attivo = true` |
+| `temperatura_esterna` | decimale | no | Temperatura corrente da Open-Meteo; null se la lettura esterna fallisce |
+| `umidita_esterna` | decimale | no | Umidità corrente da Open-Meteo; null se la lettura esterna fallisce |
 
 ### 5.3 Frequenza di scrittura
 
@@ -263,7 +293,35 @@ L'applicazione espone una serie di endpoint REST utilizzati da un front-end per 
 
 Tutti gli endpoint REST del backend richiedono l'header `X-API-Key` con una chiave presente nella configurazione `api_keys`. Una richiesta senza chiave o con chiave non autorizzata restituisce HTTP `401 Unauthorized`.
 
-### 7.1 Configurazione
+### 7.1 Stato corrente
+
+| Metodo | Endpoint | Descrizione |
+|---|---|---|
+| `GET` | `/stato` | Restituisce lo stato corrente del termostato |
+
+Il servizio esegue a ogni richiesta le seguenti letture:
+
+1. legge `temperatura` e `umidita` nella singola risposta del client REST del sensore interno;
+2. calcola `temperatura_target` dalla configurazione runtime: usa `temperatura_override` se `override_attivo = true`, altrimenti risolve l'intervallo attivo del calendario in UTC;
+3. legge `relay_acceso` direttamente dal client REST del relay;
+4. legge `temperatura_esterna` e `umidita_esterna` dal client REST Open-Meteo usando le coordinate configurate.
+
+Response di esempio:
+
+```json
+{
+  "temperatura": 19.0,
+  "umidita": 50.0,
+  "temperatura_target": 20.5,
+  "relay_acceso": false,
+  "temperatura_esterna": 24.3,
+  "umidita_esterna": 68.6
+}
+```
+
+Se non è attivo alcun override e non esiste un intervallo calendario attivo, `temperatura_target` vale `null`. Il servizio non mantiene una copia in memoria dello stato del relay. Gli errori di lettura del sensore, relay o meteo esterno producono HTTP `500 Internal Server Error` con il formato di errore REST standard.
+
+### 7.2 Configurazione
 
 | Metodo | Endpoint | Descrizione |
 |---|---|---|
@@ -272,7 +330,7 @@ Tutti gli endpoint REST del backend richiedono l'header `X-API-Key` con una chia
 | `GET` | `/config/calendario` | Restituisce il calendario settimanale |
 | `PUT` | `/config/calendario` | Aggiorna il calendario settimanale |
 
-### 7.2 Log di polling
+### 7.3 Log di polling
 
 | Metodo | Endpoint | Descrizione |
 |---|---|---|
@@ -287,7 +345,7 @@ Tutti gli endpoint REST del backend richiedono l'header `X-API-Key` con una chia
 
 Se nessun parametro viene passato, il servizio restituisce i log del **giorno corrente** in UTC. Se viene passato solo `da`, il limite superiore è la fine del giorno corrente.
 
-### 7.3 Log di errore
+### 7.4 Log di errore
 
 | Metodo | Endpoint | Descrizione |
 |---|---|---|
@@ -363,7 +421,7 @@ Lo stato corrente della caldaia utilizzato nella logica di isteresi (zona neutra
 | RF-26 | La durata di conservazione dei log è configurabile tramite il parametro `retention_log_giorni` |
 | RF-27 | Un processo dedicato viene eseguito ogni ora e cancella i record di log più vecchi di `retention_log_giorni` giorni, sia dalla tabella dei log di polling che da quella dei log di errore |
 | RF-28 | Le notifiche vengono inviate tramite il servizio ntfy verso il topic configurato (`ntfy_topic`) |
-| RF-29 | I messaggi di errore vengono inviati sempre, indipendentemente dal valore di `debug_mode` |
+| RF-29 | I messaggi di errore vengono inviati tramite ntfy quando `notifiche_errori_abilitate = true`, indipendentemente dal valore di `debug_mode` |
 | RF-30 | Se `debug_mode = true`, il sistema invia tramite ntfy un messaggio informativo ad ogni accensione e spegnimento della caldaia |
 | RF-31 | L'applicazione espone un endpoint REST per leggere la configurazione corrente |
 | RF-32 | L'applicazione espone un endpoint REST per aggiornare la configurazione |
@@ -374,6 +432,12 @@ Lo stato corrente della caldaia utilizzato nella logica di isteresi (zona neutra
 | RF-37 | All'avvio il sistema verifica l'esistenza del file di database: se non esiste lo crea (con le directory intermedie) e ne inizializza lo schema; se esiste lo utilizza senza reinizializzare i dati |
 | RF-38 | La configurazione contiene l'elenco `api_keys` delle chiavi autorizzate per le richieste REST inbound |
 | RF-39 | Ogni richiesta REST deve presentare nell'header `X-API-Key` una chiave presente in `api_keys`; in caso di chiave assente o non valida il backend restituisce HTTP 401 Unauthorized |
+| RF-40 | L'applicazione espone `GET /stato`, che legge a ogni richiesta temperatura dal sensore, target attivo dalla configurazione/calendario e stato corrente dal relay; senza target attivo restituisce `temperatura_target = null` |
+| RF-41 | Il sensore interno restituisce temperatura e umidità nella stessa risposta REST; l'umidità è una percentuale normalizzata a una cifra decimale |
+| RF-42 | Il sistema dispone di un client REST per un servizio meteo pubblico, configurato tramite URL e coordinate; il default è Open-Meteo con il punto di Acireale (Catania) |
+| RF-43 | `GET /stato` restituisce temperatura e umidità interne, temperatura target, stato relay e temperatura/umidità esterne |
+| RF-44 | Il log di polling memorizza temperatura e umidità interne e temperatura/umidità esterne; se il servizio esterno non è disponibile, i relativi valori sono null |
+| RF-45 | Il parametro `notifiche_errori_abilitate` abilita o disabilita l'invio delle notifiche di errore tramite ntfy senza modificare le notifiche informative controllate da `debug_mode` |
 
 ---
 

@@ -21,6 +21,9 @@ public class NotificationService {
     }
 
     public void notificaErrore(String message) {
+        if (!configuration.current().notificheErroriAbilitate()) {
+            return;
+        }
         publish(message, "high", true);
     }
 

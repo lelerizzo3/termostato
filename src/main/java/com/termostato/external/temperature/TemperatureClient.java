@@ -17,12 +17,17 @@ public class TemperatureClient {
         this.configuration = configuration;
     }
 
-    public BigDecimal leggiTemperatura() {
+    public TemperatureReading leggiLettura() {
         TemperatureHttpApi api = factory.createProxy(configuration.current().sensoreUrl(), TemperatureHttpApi.class, true);
         TemperatureReading reading = api.leggiTemperatura();
-        if (reading == null || reading.temperatura() == null) {
-            throw new IllegalStateException("Risposta temperatura vuota");
+        if (reading == null || reading.temperatura() == null || reading.umidita() == null) {
+            throw new IllegalStateException("Risposta sensore priva di temperatura o umidità");
         }
-        return reading.temperatura();
+        return reading;
+    }
+
+    /** Compatibilità per i client che richiedono solo la temperatura. */
+    public BigDecimal leggiTemperatura() {
+        return leggiLettura().temperatura();
     }
 }

@@ -22,6 +22,10 @@ termostato:
   ntfy-url: https://ntfy.sh
   ntfy-topic: sliverd
   debug-mode: false
+  notifiche-errori-abilitate: true
+  meteo-esterno-url: https://api.open-meteo.com
+  meteo-esterno-latitudine: 37.6167
+  meteo-esterno-longitudine: 15.1667
   sensore:
     url: http://sensore.local
   relay:

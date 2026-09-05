@@ -29,6 +29,16 @@ public final class TemperatureRules {
         return normalized;
     }
 
+    public static BigDecimal normalizeHumidity(BigDecimal value) {
+        if (value == null) {
+            throw new IllegalArgumentException("L'umidità rilevata è obbligatoria");
+        }
+        if (value.signum() < 0 || value.compareTo(new BigDecimal("100")) > 0) {
+            throw new IllegalArgumentException("L'umidità rilevata deve essere compresa tra 0 e 100");
+        }
+        return value.setScale(1, RoundingMode.HALF_UP);
+    }
+
     public static BigDecimal normalizeMeasured(BigDecimal value) {
         if (value == null) {
             throw new IllegalArgumentException("La temperatura rilevata è obbligatoria");

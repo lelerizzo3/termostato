@@ -9,6 +9,7 @@ public class MockDeviceProperties {
 
     private boolean enabled;
     private BigDecimal temperature = new BigDecimal("19.0");
+    private BigDecimal humidity = new BigDecimal("50.0");
     private boolean initialRelayOn;
 
     public boolean isEnabled() {
@@ -25,6 +26,14 @@ public class MockDeviceProperties {
 
     public void setTemperature(BigDecimal temperature) {
         this.temperature = temperature;
+    }
+
+    public BigDecimal getHumidity() {
+        return humidity;
+    }
+
+    public void setHumidity(BigDecimal humidity) {
+        this.humidity = humidity;
     }
 
     public boolean isInitialRelayOn() {

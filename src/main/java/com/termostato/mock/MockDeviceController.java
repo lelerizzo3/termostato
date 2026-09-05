@@ -42,16 +42,17 @@ public class MockDeviceController {
         return ResponseEntity.noContent().build();
     }
 
-    /** Comando di test per cambiare la temperatura simulata. */
+    /** Comando di test per cambiare temperatura e umidità simulate. */
     @PutMapping("/mock/temperature")
     public TemperatureReading setTemperature(@RequestBody TemperatureReading reading) {
-        state.setTemperature(reading.temperatura());
+        state.setReading(reading);
         return state.temperatureReading();
     }
 
     @GetMapping("/mock/state")
     public MockStateResponse state() {
-        return new MockStateResponse(state.temperatureReading().temperatura(), state.relayOn());
+        TemperatureReading reading = state.temperatureReading();
+        return new MockStateResponse(reading.temperatura(), reading.umidita(), state.relayOn());
     }
 
     @PostMapping("/mock/reset")

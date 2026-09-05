@@ -16,7 +16,7 @@ info:
     per lo scenario E2E. Il client ntfy e gli endpoint configurati per i
     dispositivi fisici sono integrazioni outbound e non fanno parte di questa
     specifica inbound.
-  version: 1.0.0
+  version: 1.1.0
   contact:
     name: Team Termostato
 servers:
@@ -31,6 +31,8 @@ tags:
     description: Configurazione runtime e calendario settimanale
   - name: Log
     description: Log dei cicli di polling e degli errori
+  - name: Stato
+    description: Stato corrente letto da sensore, configurazione e relay
   - name: Actuator
     description: Endpoint operativi Spring Boot Actuator
   - name: Mock
@@ -60,6 +62,10 @@ paths:
                 ntfy_url: https://ntfy.sh
                 ntfy_topic: sliverd
                 debug_mode: false
+                notifiche_errori_abilitate: true
+                meteo_esterno_url: https://api.open-meteo.com
+                meteo_esterno_latitudine: 37.6167
+                meteo_esterno_longitudine: 15.1667
                 sensore_url: http://sensore.local
                 relay_url: http://relay.local
                 database_path: ./data/termostato.db
@@ -97,6 +103,10 @@ paths:
               ntfy_url: https://ntfy.sh
               ntfy_topic: sliverd
               debug_mode: false
+              notifiche_errori_abilitate: true
+              meteo_esterno_url: https://api.open-meteo.com
+              meteo_esterno_latitudine: 37.6167
+              meteo_esterno_longitudine: 15.1667
               sensore_url: http://sensore.local
               relay_url: http://relay.local
               database_path: ./data/termostato.db
@@ -242,6 +252,81 @@ paths:
         '500':
           $ref: '#/components/responses/InternalServerError'
 
+  /stato:
+    get:
+      tags: [Stato]
+      summary: Legge lo stato corrente del termostato
+      description: |
+        Legge in tempo reale temperatura e umidità dal sensore interno,
+        lo stato dal relay e temperatura/umidità esterne da Open-Meteo.
+        `temperatura_target` è il target risolto dalla configurazione al momento
+        della richiesta: override se attivo, altrimenti intervallo calendario
+        UTC corrente. È `null` quando non esiste alcun target attivo.
+      operationId: getCurrentState
+      responses:
+        '200':
+          description: Stato corrente del termostato
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                  - temperatura
+                  - umidita
+                  - temperatura_target
+                  - relay_acceso
+                  - temperatura_esterna
+                  - umidita_esterna
+                properties:
+                  temperatura:
+                    type: number
+                    format: double
+                    description: Temperatura interna rilevata dal sensore in °C.
+                    example: 19.0
+                  umidita:
+                    type: number
+                    format: double
+                    minimum: 0
+                    maximum: 100
+                    description: Umidità relativa interna in percentuale, a una cifra decimale.
+                    example: 50.0
+                  temperatura_target:
+                    type: number
+                    format: double
+                    nullable: true
+                    description: Target configurato e attivo in °C; null senza target.
+                    example: 20.5
+                  relay_acceso:
+                    type: boolean
+                    description: Stato letto direttamente dal relay.
+                    example: false
+                  temperatura_esterna:
+                    type: number
+                    format: double
+                    nullable: true
+                    description: Temperatura esterna corrente da Open-Meteo in °C.
+                    example: 24.3
+                  umidita_esterna:
+                    type: number
+                    format: double
+                    nullable: true
+                    minimum: 0
+                    maximum: 100
+                    description: Umidità relativa esterna da Open-Meteo in percentuale.
+                    example: 68.6
+              example:
+                temperatura: 19.0
+                umidita: 50.0
+                temperatura_target: 20.5
+                relay_acceso: false
+                temperatura_esterna: 24.3
+                umidita_esterna: 68.6
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
   /actuator/health:
     get:
       tags: [Actuator]
@@ -345,6 +430,7 @@ paths:
                 $ref: '#/components/schemas/TemperatureReading'
               example:
                 temperatura: 19.0
+                umidita: 50.0
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':
@@ -400,7 +486,7 @@ paths:
   /mock/temperature:
     put:
       tags: [Mock]
-      summary: Imposta la temperatura simulata
+      summary: Imposta temperatura e umidità simulate
       description: Disponibile solo con il profilo `mock`; endpoint di controllo dello scenario E2E.
       operationId: setMockTemperature
       requestBody:
@@ -411,6 +497,7 @@ paths:
               $ref: '#/components/schemas/TemperatureReading'
             example:
               temperatura: 21.0
+              umidita: 50.0
       responses:
         '200':
           description: Nuova lettura del sensore simulato
@@ -440,6 +527,7 @@ paths:
                 $ref: '#/components/schemas/MockStateResponse'
               example:
                 temperatura: 19.0
+                umidita: 50.0
                 relay_acceso: false
         '401':
           $ref: '#/components/responses/Unauthorized'
@@ -548,6 +636,10 @@ components:
         - ntfy_url
         - ntfy_topic
         - debug_mode
+        - notifiche_errori_abilitate
+        - meteo_esterno_url
+        - meteo_esterno_latitudine
+        - meteo_esterno_longitudine
         - sensore_url
         - relay_url
         - database_path
@@ -604,6 +696,31 @@ components:
           type: boolean
           description: Abilita le notifiche informative di accensione e spegnimento.
           example: false
+        notifiche_errori_abilitate:
+          type: boolean
+          description: Abilita le notifiche degli errori tramite ntfy.
+          default: true
+          example: true
+        meteo_esterno_url:
+          type: string
+          format: uri
+          minLength: 1
+          description: URL base del servizio REST meteo pubblico.
+          example: https://api.open-meteo.com
+        meteo_esterno_latitudine:
+          type: number
+          format: double
+          minimum: -90
+          maximum: 90
+          description: Latitudine del punto usato per il meteo esterno; default Acireale.
+          example: 37.6167
+        meteo_esterno_longitudine:
+          type: number
+          format: double
+          minimum: -180
+          maximum: 180
+          description: Longitudine del punto usato per il meteo esterno; default Acireale.
+          example: 15.1667
         sensore_url:
           type: string
           format: uri
@@ -698,13 +815,20 @@ components:
     TemperatureReading:
       type: object
       additionalProperties: false
-      required: [temperatura]
+      required: [temperatura, umidita]
       properties:
         temperatura:
           type: number
           format: double
           description: Temperatura in °C, normalizzata a una cifra decimale.
           example: 19.0
+        umidita:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          description: Umidità relativa in percentuale, normalizzata a una cifra decimale.
+          example: 50.0
 
     RelayCommand:
       type: object
@@ -731,6 +855,7 @@ components:
       additionalProperties: false
       required:
         - temperatura
+        - umidita
         - relay_acceso
       properties:
         temperatura:
@@ -738,6 +863,13 @@ components:
           format: double
           description: Temperatura corrente del dispositivo simulato in °C.
           example: 19.0
+        umidita:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          description: Umidità relativa del dispositivo simulato in percentuale.
+          example: 50.0
         relay_acceso:
           type: boolean
           description: Stato corrente del relay simulato.
@@ -751,9 +883,12 @@ components:
         - data_ora
         - caldaia_accesa
         - temperatura_rilevata
+        - umidita_rilevata
         - temperatura_target
         - override_attivo
         - temperatura_override
+        - temperatura_esterna
+        - umidita_esterna
       properties:
         id:
           type: integer
@@ -771,6 +906,13 @@ components:
           type: number
           format: double
           example: 19.0
+        umidita_rilevata:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          description: Umidità interna rilevata dal sensore in percentuale.
+          example: 50.0
         temperatura_target:
           type: number
           format: double
@@ -785,6 +927,20 @@ components:
           format: double
           nullable: true
           example: null
+        temperatura_esterna:
+          type: number
+          format: double
+          nullable: true
+          description: Temperatura esterna da Open-Meteo; null se la lettura è fallita.
+          example: 24.3
+        umidita_esterna:
+          type: number
+          format: double
+          nullable: true
+          minimum: 0
+          maximum: 100
+          description: Umidità esterna da Open-Meteo; null se la lettura è fallita.
+          example: 68.6
 
     ErrorLogRecord:
       type: object

@@ -15,10 +15,12 @@ class MockDeviceStateTest {
     void mantieneTemperaturaEStatoRelaySoloNelMock() {
         MockDeviceProperties properties = new MockDeviceProperties();
         properties.setTemperature(new BigDecimal("19.0"));
+        properties.setHumidity(new BigDecimal("50.0"));
         properties.setInitialRelayOn(false);
         MockDeviceState state = new MockDeviceState(properties);
 
         assertEquals(new BigDecimal("19.0"), state.temperatureReading().temperatura());
+        assertEquals(new BigDecimal("50.0"), state.temperatureReading().umidita());
         assertFalse(state.relayOn());
 
         state.applyRelayCommand(new RelayCommand(true));

@@ -15,16 +15,19 @@ import java.util.concurrent.atomic.AtomicReference;
 public class MockDeviceState {
 
     private final AtomicReference<BigDecimal> temperature;
+    private final AtomicReference<BigDecimal> humidity;
     private final AtomicBoolean relayOn;
 
     public MockDeviceState(MockDeviceProperties properties) {
         this.temperature = new AtomicReference<>(
                 TemperatureRules.normalizeMeasured(properties.getTemperature()));
+        this.humidity = new AtomicReference<>(
+                TemperatureRules.normalizeHumidity(properties.getHumidity()));
         this.relayOn = new AtomicBoolean(properties.isInitialRelayOn());
     }
 
     public TemperatureReading temperatureReading() {
-        return new TemperatureReading(temperature.get());
+        return new TemperatureReading(temperature.get(), humidity.get());
     }
 
     public boolean relayOn() {
@@ -33,6 +36,14 @@ public class MockDeviceState {
 
     public void setTemperature(BigDecimal value) {
         temperature.set(TemperatureRules.normalizeMeasured(value));
+    }
+
+    public void setReading(TemperatureReading reading) {
+        if (reading == null) {
+            throw new IllegalArgumentException("La lettura del sensore è obbligatoria");
+        }
+        temperature.set(TemperatureRules.normalizeMeasured(reading.temperatura()));
+        humidity.set(TemperatureRules.normalizeHumidity(reading.umidita()));
     }
 
     public void applyRelayCommand(RelayCommand command) {
@@ -44,6 +55,7 @@ public class MockDeviceState {
 
     public void reset(MockDeviceProperties properties) {
         setTemperature(properties.getTemperature());
+        humidity.set(TemperatureRules.normalizeHumidity(properties.getHumidity()));
         relayOn.set(properties.isInitialRelayOn());
     }
 }

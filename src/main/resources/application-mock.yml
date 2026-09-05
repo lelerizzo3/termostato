@@ -16,6 +16,7 @@ termostato:
   mock-devices:
     enabled: true
     temperature: 19.0
+    humidity: 50.0
     initial-relay-on: false
 
   # Default per il primo scenario E2E: temperatura 19.0, target 20.5 -> ON.

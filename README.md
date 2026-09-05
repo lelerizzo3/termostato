@@ -26,13 +26,27 @@ java -jar target/termostato.jar `
 
 ## API principali
 
+- `GET /stato` — temperatura e umidità interne, target, stato relay, temperatura e umidità esterne
 - `GET/PUT /config`
 - `GET/PUT /config/calendario`
 - `GET /log?da=YYYY-MM-DD&a=YYYY-MM-DD`
 - `GET /log/errori?da=YYYY-MM-DD&a=YYYY-MM-DD`
 - `GET /actuator/health`
 
-## Autenticazione API
+## Meteo esterno e notifiche errori
+
+Il servizio legge temperatura e umidità esterne tramite l'API REST pubblica [Open-Meteo](https://open-meteo.com/). Il default è il punto di riferimento di Acireale (Catania), ma URL e coordinate sono configurabili:
+
+```yaml
+termostato:
+  meteo-esterno-url: https://api.open-meteo.com
+  meteo-esterno-latitudine: 37.6167
+  meteo-esterno-longitudine: 15.1667
+  notifiche-errori-abilitate: true
+```
+
+`notifiche-errori-abilitate` controlla esclusivamente l'invio degli errori tramite ntfy. Le notifiche informative di accensione/spegnimento restano controllate da `debug-mode`. Se Open-Meteo non è raggiungibile durante il polling, il controllo locale sensore/relay continua; il record di polling mantiene vuote le misure esterne e viene registrato un errore.
+
 
 Tutti gli endpoint REST richiedono l'header `X-API-Key`. La lista è configurabile tramite `api_keys`/`api-keys`; una chiave assente o non valida restituisce HTTP 401. Il default è vuoto (fail-closed), quindi configurare almeno una chiave prima di usare le API:
 
@@ -73,7 +87,7 @@ Lo script avvia il jar con il profilo Spring `mock`, che espone nello stesso pro
 - `GET /temperature` — risposta del sensore simulato;
 - `GET /relay` — stato del relay simulato;
 - `POST /relay` — comando del relay simulato;
-- `PUT /mock/temperature` — modifica della temperatura simulata;
+- `PUT /mock/temperature` — modifica temperatura e umidità simulate;
 - `GET /mock/state` — stato utile allo scenario E2E;
 - `POST /mock/reset` — ripristino dello stato iniziale.
 

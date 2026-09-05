@@ -14,7 +14,7 @@
 | Framework | **Spring Boot 4.1.1** su Spring Framework 7 | Linea stabile corrente verificata sulla documentazione ufficiale; include HTTP Service Clients e modularizzazione dei jar. |
 | Build tool | **Maven** (wrapper `mvnw`) | Gestione dipendenze e build riproducibile. Gradle è alternativa valida. |
 | Web layer | **Spring Web MVC** (Tomcat embedded) | Il carico previsto è basso (front-end di gestione domestico); MVC sincrono è più semplice del reactive e sufficiente. |
-| Client REST esterni | **Spring `RestClient` + HTTP Interface (`@HttpExchange`)** | Feature di prima classe in Spring Boot 4 per i client REST dichiarativi (RF-12, RF-13, RF-14, RF-21, RF-28). |
+| Client REST esterni | **Spring `RestClient` + HTTP Interface (`@HttpExchange`)** | Feature di prima classe in Spring Boot 4 per i client REST dichiarativi (RF-12, RF-13, RF-14, RF-21, RF-28, RF-42). |
 | Persistenza | **Spring JDBC (`JdbcTemplate`)** | Repository SQL espliciti per le due tabelle di log (RF-18, RF-20); evita dipendenze ORM non necessarie per SQLite. |
 | Database | **SQLite** (file singolo) | Persistenza embedded su file, percorso configurabile (RF-36, RF-37). Nessun server DB esterno (RNF-05), driver `sqlite-jdbc` (Xerial). |
 | Migrazioni schema | **Flyway** + `flyway-database-nc-sqlite` | Versionamento controllato dello schema; crea le tabelle al primo avvio se il file è nuovo. |
@@ -39,13 +39,14 @@ Architettura **a layer con orientamento esagonale (ports & adapters)**: il domin
 ```mermaid
 graph TD
     subgraph "Inbound Adapters"
-        REST["REST Controllers<br/>/config, /log, ..."]
+        REST["REST Controllers<br/>/stato, /config, /log, ..."]
         SCHED["Scheduler<br/>@Scheduled polling"]
         CLEAN["Scheduler<br/>@Scheduled cleanup"]
     end
 
     subgraph "Application Core (dominio)"
         CTRL["ThermostatControlService<br/>(logica di controllo)"]
+        STATE["CurrentStateService<br/>(letture stato corrente)"]
         TARGET["TargetTemperatureResolver<br/>(calendario / override)"]
         ERRS["ErrorTrackingService<br/>(contatori errori consecutivi)"]
         CFG["ConfigurationService"]
@@ -53,13 +54,15 @@ graph TD
 
     subgraph "Outbound Adapters (ports)"
         TEMPC["TemperatureClient<br/>@HttpExchange"]
+        WEATHERClient["ExternalWeatherClient<br/>@HttpExchange"]
         RELAYC["RelayClient<br/>@HttpExchange"]
         NTFYC["NtfyClient<br/>@HttpExchange"]
         REPO["JDBC Repositories<br/>(log, log errori)"]
     end
 
     subgraph "Esterni"
-        SENSOR["API Sensore Temp."]
+        SENSOR["API Sensore Temp./Umidità"]
+        WEATHER["Open-Meteo API"]
         RELAY["API Relay Caldaia"]
         NTFY["ntfy.sh"]
         DB[("SQLite (file)")]
@@ -67,16 +70,24 @@ graph TD
 
     REST --> CFG
     REST --> REPO
+    REST --> STATE
+    STATE --> CFG
+    STATE --> TARGET
+    STATE --> TEMPC
+    STATE --> WEATHERClient
+    STATE --> RELAYC
     SCHED --> CTRL
     CLEAN --> REPO
     CTRL --> TARGET
     CTRL --> ERRS
     CTRL --> CFG
     CTRL --> TEMPC
+    CTRL --> WEATHERClient
     CTRL --> RELAYC
     CTRL --> NTFYC
     CTRL --> REPO
     TEMPC --> SENSOR
+    WEATHERClient --> WEATHER
     RELAYC --> RELAY
     NTFYC --> NTFY
     REPO --> DB
@@ -95,6 +106,7 @@ com.termostato
 ├── domain/
 │   ├── control/
 │   │   ├── ThermostatControlService.java
+│   │   ├── CurrentStateService.java    # stato corrente per GET /stato
 │   │   ├── TargetTemperatureResolver.java
 │   │   ├── HeatingDecisionCalculator.java
 │   │   ├── HeatingDecision.java        # enum: ON, OFF, UNCHANGED
@@ -102,6 +114,7 @@ com.termostato
 │   └── model/
 │       ├── Calendario.java             # 7 nodi giornalieri
 │       ├── CalendarioDocument.java
+│       ├── CurrentState.java          # snapshot interno dello stato corrente
 │       ├── GiornoSettimana.java
 │       ├── IntervalloOrario.java
 │       └── SystemConfiguration.java
@@ -113,6 +126,11 @@ com.termostato
 │   ├── relay/
 │   │   ├── RelayClient.java             # adapter @HttpExchange
 │   │   └── RelayCommand.java
+│   ├── weather/
+│   │   ├── ExternalWeatherClient.java  # adapter Open-Meteo
+│   │   ├── OpenMeteoHttpApi.java       # @HttpExchange current forecast
+│   │   ├── OpenMeteoResponse.java
+│   │   └── WeatherReading.java
 │   └── notification/
 │       ├── NtfyHttpApi.java             # @HttpExchange
 │       └── NotificationService.java
@@ -131,9 +149,11 @@ com.termostato
 │   ├── PollingScheduler.java           # RF-11
 │   └── LogRetentionScheduler.java      # RF-27
 └── web/
+    ├── CurrentStateController.java    # RF-40, GET /stato
     ├── ConfigController.java           # RF-31, RF-32, RF-33
     ├── LogController.java              # RF-34, RF-35
-    └── dto/                            # DTO request/response
+    └── dto/
+        └── CurrentStateResponse.java   # temperatura/umidità interne, target, relay e meteo esterno
 ```
 
 ---
@@ -159,8 +179,12 @@ Mappa i parametri della sezione 3 delle specifiche funzionali. Legato con `@Conf
 | `relay.url` | `String` | RF-13, RF-14, RF-21 | — | `@NotBlank` (URL) |
 | `databasePath` | `String` | RF-36, RF-37 | `./data/termostato.db` | `@NotBlank` (percorso file SQLite) |
 | `apiKeys` | `List<String>` | RF-38, RF-39 | `[]` | stringhe non vuote; confronto constant-time; lista vuota = fail-closed |
+| `meteoEsternoUrl` | `String` | RF-42 | `https://api.open-meteo.com` | URL base REST pubblico |
+| `meteoEsternoLatitudine` | `BigDecimal` | RF-42 | `37.6167` | intervallo `[-90, 90]`; default Acireale |
+| `meteoEsternoLongitudine` | `BigDecimal` | RF-42 | `15.1667` | intervallo `[-180, 180]`; default Acireale |
+| `notificheErroriAbilitate` | `boolean` | RF-45 | `true` | abilita/disabilita solo errori ntfy |
 
-> **Nota:** i valori di temperatura usano `BigDecimal` con scala 1 (RNF-02) per evitare imprecisioni float e garantire una sola cifra decimale.
+> **Nota:** i valori di temperatura e umidità usano `BigDecimal` con scala 1 (RNF-02/RF-41) per evitare imprecisioni float e garantire una sola cifra decimale. L'umidità è validata nell'intervallo 0–100.
 
 ### 3.2 Modificabilità a runtime (RNF-01)
 
@@ -198,6 +222,7 @@ Al riavvio successivo si applica di nuovo la logica di caricamento sopra, quindi
 
 - Config mancante → si applicano i default della tabella 3.1.
 - Config malformata → l'errore di parsing viene loggato, si mantiene l'ultima config valida (o i default all'avvio) e si invia notifica ntfy di errore.
+- Un `config.json` precedente privo di `meteo_esterno_url`, coordinate, `notifiche_errori_abilitate` o `api_keys` viene completato usando i default YAML e riscritto atomicamente quando possibile.
 - Il calendario malformato non blocca l'avvio: se non caricabile, il resolver tratta ogni momento come "nessun intervallo attivo" → caldaia spenta (comportamento sicuro, coerente con RF-10).
 
 ### 3.4 Autenticazione API-key (RF-38, RF-39)
@@ -262,41 +287,56 @@ Spring Boot 4 fornisce supporto di prima classe per HTTP Interface. Ogni client 
 
 ### 5.1 Configurazione dei client (`HttpClientConfig`)
 
-```java
-@Configuration
-class HttpClientConfig {
+`RestClientFactory#createProxy` crea il proxy HTTP per ogni lettura o invio, usando l'URL corrente della configurazione. Il factory applica un timeout di connessione e lettura (`http-timeout-millis`, con fallback a 3000 ms) tramite `SimpleClientHttpRequestFactory` e costruisce il proxy con `HttpServiceProxyFactory`/`RestClientAdapter`.
 
-    @Bean
-    TemperatureClient temperatureClient(RestClient.Builder builder, ConfigurationService cfg) {
-        RestClient client = builder
-            .baseUrl(cfg.getSensoreUrl())
-            .requestFactory(timeoutRequestFactory()) // connect/read timeout
-            .build();
-        return HttpServiceProxyFactory.builderFor(RestClientAdapter.create(client))
-            .build().createClient(TemperatureClient.class);
-    }
-    // analoghi per RelayClient e NtfyClient
-}
-```
+- `TemperatureClient`, `ExternalWeatherClient`, `RelayClient` e `NotificationService` selezionano il contratto HTTP appropriato (`TemperatureHttpApi`, `OpenMeteoHttpApi`, `RelayHttpApi`, `NtfyHttpApi`).
+- La creazione per chiamata rende immediatamente effettive le modifiche runtime agli URL in `SystemConfiguration` senza ricreare bean Spring.
+- L'header `X-API-Key` viene aggiunto solo alle chiamate verso i dispositivi mock interni quando il profilo mock è attivo; non viene inviato a Open-Meteo o ntfy.
+- Un timeout, errore HTTP o payload invalido viene propagato al client chiamante e gestito dal servizio di controllo o dal layer REST secondo il flusso descritto nelle sezioni 6 e 9.
 
-- **Timeout obbligatori** su connect e read per non bloccare il ciclo di polling (contribuisce a RNF-04). Un timeout è trattato come errore API (sezione 4.3 funzionale).
-- Gli URL base derivano da `ConfigurationService`. Se l'URL cambia a runtime, i client vengono ricreati (bean con scope aggiornabile o factory invocata per-chiamata leggendo l'URL corrente).
-
-### 5.2 Client lettura temperatura (RF-12)
+### 5.2 Client lettura temperatura e umidità interne (RF-12, RF-41)
 
 ```java
 @HttpExchange
-interface TemperatureClient {
+interface TemperatureHttpApi {
     @GetExchange("/temperature")
-    TemperatureReading leggiTemperatura(); // { "temperatura": 19.3 }
+    TemperatureReading leggiTemperatura();
+    // { "temperatura": 19.3, "umidita": 50.2 }
 }
 ```
 
-- Invocato ad ogni ciclo di polling.
-- Restituisce °C con una cifra decimale (mappato su `BigDecimal`).
-- Errore/timeout/risposta invalida → categoria errore `READ_TEMP` (sezione 4.3).
+`TemperatureClient#leggiLettura` invoca una sola volta l'endpoint e valida entrambe le proprietà. La temperatura è normalizzata in °C e l'umidità relativa in percentuale, entrambe con una cifra decimale; l'umidità fuori dall'intervallo 0–100 o assente rende invalida la lettura e produce l'errore `READ_TEMP`.
 
-### 5.3 Client relay caldaia (RF-13, RF-21, RF-22, RF-23)
+- Invocato a ogni ciclo di polling e da `CurrentStateService`.
+- Il client resta puntato allo stesso `sensore_url` già configurato; non esiste un secondo sensore.
+- `leggiTemperatura()` resta disponibile come metodo di compatibilità e restituisce solo la temperatura, ma il controllo usa la lettura completa.
+
+### 5.3 Client meteo esterno (RF-42)
+
+```java
+@HttpExchange
+interface OpenMeteoHttpApi {
+    @GetExchange("/v1/forecast")
+    OpenMeteoResponse current(
+        @RequestParam("latitude") BigDecimal latitude,
+        @RequestParam("longitude") BigDecimal longitude,
+        @RequestParam("current") String current,
+        @RequestParam("timezone") String timezone);
+}
+```
+
+`ExternalWeatherClient` crea dinamicamente il proxy usando `meteo_esterno_url` e richiede:
+
+```text
+/v1/forecast?latitude=37.6167&longitude=15.1667
+  &current=temperature_2m,relative_humidity_2m&timezone=UTC
+```
+
+Le coordinate sono lette dalla configurazione runtime e il default è Acireale (Catania). La risposta `current` viene mappata sulle chiavi Open-Meteo `temperature_2m` e `relative_humidity_2m`, poi normalizzata a una cifra decimale. Il client non usa API-key backend e non riceve l'header `X-API-Key`.
+
+Durante il polling un errore Open-Meteo è best-effort: viene registrato nella categoria `READ_WEATHER` e notificato secondo `notifiche_errori_abilitate`, ma non interrompe la decisione locale né attiva la messa in sicurezza della caldaia. In `GET /stato`, invece, l'errore impedisce di costruire una risposta completa e viene restituito HTTP 500.
+
+### 5.4 Client relay caldaia (RF-13, RF-21, RF-22, RF-23)
 
 ```java
 @HttpExchange
@@ -316,7 +356,7 @@ interface RelayClient {
 - **Fonte di verità = relay fisico (RF-23):** lo stato non è mai cachato. `ThermostatControlService` invoca `leggiStato()` ogni volta che serve lo stato corrente (zona neutra dell'isteresi, sezione 8.3).
 - Errore lettura stato → categoria `READ_RELAY`; errore comando → `TURN_ON` o `TURN_OFF`.
 
-### 5.4 Client notifiche ntfy (RF-28, RF-29, RF-30)
+### 5.5 Client notifiche ntfy (RF-28, RF-29, RF-30, RF-45)
 
 ```java
 @HttpExchange
@@ -332,24 +372,24 @@ interface NtfyClient {
 
 | Tipo messaggio | Priorità | Condizione invio | Requisito |
 |---|---|---|---|
-| Errore | `high` | sempre | RF-15, RF-29 |
+| Errore | `high` | solo se `notificheErroriAbilitate = true` | RF-15, RF-29, RF-45 |
 | Info accensione/spegnimento | `default` | solo se `debugMode = true` | RF-30 |
 
 Esempi messaggi info: `"Caldaia accesa — temperatura rilevata 19.3°C, target 20.5°C"`.
 
-> **Attenzione:** un fallimento nell'invio della notifica **non deve** propagarsi al ciclo di controllo. Viene loggato ma non conteggiato tra gli errori delle API di controllo (le specifiche 4.3 riguardano sensore e relay).
+> **Attenzione:** un fallimento nell'invio della notifica **non deve** propagarsi al ciclo di controllo. Se `notificheErroriAbilitate = false`, `NotificationService#notificaErrore` termina senza creare il proxy HTTP; `debugMode` continua a controllare solo le notifiche informative.
 
-### 5.5 Profilo mock per sensore e relay
+### 5.6 Profilo mock per sensore e relay
 
 Per il primo test E2E è disponibile il profilo Spring `mock`, attivabile con `--spring.profiles.active=mock`. Il profilo registra controller HTTP condizionali nello stesso jar e configura i client sensore/relay con base URL `http://localhost:8080`:
 
 | Endpoint mock | Metodo | Funzione |
 |---|---|---|
-| `/temperature` | `GET` | Risposta del sensore simulato (`{"temperatura": 19.0}`) |
+| `/temperature` | `GET` | Risposta del sensore simulato (`{"temperatura": 19.0, "umidita": 50.0}`) |
 | `/relay` | `GET` | Stato corrente del relay simulato (`{"acceso": false}`) |
 | `/relay` | `POST` | Aggiorna lo stato del relay simulato |
-| `/mock/temperature` | `PUT` | Cambia la temperatura simulata |
-| `/mock/state` | `GET` | Restituisce temperatura e stato per le asserzioni E2E |
+| `/mock/temperature` | `PUT` | Cambia temperatura e umidità simulate |
+| `/mock/state` | `GET` | Restituisce temperatura, umidità e stato per le asserzioni E2E |
 | `/mock/reset` | `POST` | Ripristina i valori iniziali del profilo |
 
 Lo stato del relay nel mock è una `AtomicBoolean` del dispositivo simulato e non è usato dal `ThermostatControlService` come stato interno della caldaia. In produzione il mock controller non viene registrato (`termostato.mock-devices.enabled=false` di default).
@@ -380,41 +420,51 @@ sequenceDiagram
     participant S as PollingScheduler
     participant C as ThermostatControlService
     participant T as TemperatureClient
+    participant W as ExternalWeatherClient
     participant R as RelayClient
     participant N as NotificationService
     participant DB as Repositories
     participant E as ErrorTrackingService
 
-    S->>C: eseguiCiclo()
-    C->>T: leggiTemperatura()
-    alt errore lettura temperatura
+    S->>C: executePollingCycle()
+    C->>T: leggiLettura()
+    alt errore lettura temperatura/umidità interna
         C->>E: incrementa(READ_TEMP)
-        C->>N: notificaErrore("Impossibile leggere la temperatura")
         C->>DB: scrivi ErrorLog
+        C->>N: notificaErrore(... se abilitata)
         alt contatore >= maxErroriConsecutivi
-            C->>R: inviaComando(OFF)  %% messa in sicurezza (RF-16)
+            C->>R: inviaComando(OFF) %% messa in sicurezza RF-16
         end
-        C->>DB: scrivi PollingLog (best effort)
-    else temperatura ok
-        C->>E: reset(READ_TEMP)
+        Note over C: ciclo interrotto; nessun log polling senza lettura interna
+    else lettura interna ok
+        C->>W: leggiLettura()
+        alt errore lettura meteo esterno
+            C->>E: incrementa(READ_WEATHER)
+            C->>DB: scrivi ErrorLog
+            C->>N: notificaErrore(... se abilitata)
+            Note over C: errore informativo; continua controllo locale
+        end
         C->>C: target = resolver.risolviTarget(...)
         alt nessun target (calendario vuoto e no override)
             Note over C: target assente -> caldaia OFF (RF-10)
         end
-        C->>R: leggiStato()  %% RF-23 fonte di verità
+        C->>R: leggiStato() %% RF-23 fonte di verità
         C->>C: decisione = calcolaDecisione(temp, target, soglia, statoAttuale)
         alt decisione == ON
             C->>R: inviaComando(ON)
-            C->>N: notificaInfo("Caldaia accesa ...")  %% se debugMode
+            C->>N: notificaInfo(... se debugMode)
         else decisione == OFF
             C->>R: inviaComando(OFF)
-            C->>N: notificaInfo("Caldaia spenta ...")   %% se debugMode
+            C->>N: notificaInfo(... se debugMode)
         else UNCHANGED
             Note over C: nessun comando
         end
-        C->>DB: scrivi PollingLog (RF-18)
+        C->>DB: scrivi PollingLog (umidità interna + meteo; esterni null se errore)
+        C->>E: resetAll()
     end
 ```
+
+Il polling salva un `PollingLogRecord` dopo una decisione completata e anche quando fallisce un comando ON/OFF, includendo la lettura interna e, se disponibile, quella esterna. Se Open-Meteo fallisce, `temperatura_esterna` e `umidita_esterna` sono `null`; l'errore `READ_WEATHER` non applica la soglia di sicurezza e non impedisce il controllo sensore/relay. Un errore di lettura del sensore interrompe invece il ciclo prima della decisione perché mancano i dati necessari.
 
 ### 6.3 Algoritmo di decisione isteresi (sezione 8.3, RF-08, RF-09)
 
@@ -433,10 +483,11 @@ HeatingDecision calcolaDecisione(temp, targetOpt, soglia, statoAttuale):
 
 ### 6.4 Gestione errori e messa in sicurezza (RF-15, RF-16, RF-17, sezione 4.3)
 
-`ErrorTrackingService` mantiene un contatore per categoria (`READ_TEMP`, `TURN_ON`, `READ_RELAY`).
+`ErrorTrackingService` mantiene un contatore per categoria (`READ_TEMP`, `READ_WEATHER`, `TURN_ON`, `READ_RELAY`, `TURN_OFF`).
 
-- Ad ogni errore: incrementa il contatore, scrive `ErrorLog` (RF-20) e invia notifica (RF-15, RF-29).
-- Al raggiungimento di `maxErroriConsecutivi`: **spegne la caldaia** (`inviaComando(OFF)`) (RF-16).
+- Ad ogni errore viene incrementato il contatore e scritto un `ErrorLog` (RF-20); `NotificationService` invia la notifica solo se `notificheErroriAbilitate=true`.
+- Per `READ_TEMP`, `READ_RELAY` e `TURN_ON`, al raggiungimento di `maxErroriConsecutivi` viene tentato lo spegnimento di sicurezza (`inviaComando(OFF)`).
+- `READ_WEATHER` è esplicitamente best-effort: viene registrato e può notificare l'errore, ma non applica la soglia e non interrompe il controllo locale. Se il ciclo locale termina, i contatori vengono comunque azzerati dal normale `resetAll()`.
 - Un ciclo di polling completato con successo **azzera** i contatori (sezione 3.4).
 - **Caso speciale spegnimento (RF-17):** l'errore `TURN_OFF` **non** applica la soglia. Il sistema ritenta `inviaComando(OFF)` ad **ogni** ciclo, con notifica di errore ad ogni tentativo fallito, finché non riesce. Implementato con un flag persistente `spegnimentoPendente` valutato all'inizio di ogni ciclo, prima della normale logica.
 
@@ -463,7 +514,7 @@ Il database è un singolo file SQLite il cui percorso deriva da `databasePath` (
 
 1. All'avvio `DatabaseConfiguration` risolve `database-path` dai parametri di bootstrap, crea le directory intermedie mancanti (`Files.createDirectories`) e costruisce un `SQLiteDataSource` con URL `jdbc:sqlite:{databasePath}`.
 2. Il primo collegamento crea automaticamente il file se non esiste. Vengono impostati `busy_timeout`, `foreign_keys` e journal mode **WAL** (`PRAGMA journal_mode=WAL`).
-3. Flyway, tramite `flyway-database-nc-sqlite`, applica `V1__create_log_tables.sql` sul file nuovo; se il file esiste, rileva la tabella di history e conserva i dati già presenti.
+3. Flyway, tramite `flyway-database-nc-sqlite`, applica in ordine `V1__create_log_tables.sql` e `V2__add_climate_log_fields.sql` sul file nuovo; se il file esiste, rileva la tabella di history e applica solo le migrazioni non ancora eseguite, conservando i dati già presenti.
 
 > Il parametro `database_path` è **bootstrap-only**: il DataSource SQLite è già aperto quando viene elaborata una richiesta `PUT /config`, quindi il servizio rifiuta un eventuale cambio di percorso a runtime. Le altre proprietà di configurazione sono invece aggiornabili e persistite senza riavvio.
 
@@ -477,11 +528,14 @@ Il database è un singolo file SQLite il cui percorso deriva da `databasePath` (
 | `data_ora` | TEXT (ISO-8601 UTC) | no | `data_ora` |
 | `caldaia_accesa` | INTEGER (0/1) | no | `caldaia_accesa` |
 | `temperatura_rilevata` | REAL | no | `temperatura_rilevata` |
+| `umidita_rilevata` | REAL | sì | `umidita_rilevata` |
 | `temperatura_target` | REAL | sì | `temperatura_target` (null se nessun intervallo) |
 | `override_attivo` | INTEGER (0/1) | no | `override_attivo` |
 | `temperatura_override` | REAL | sì | valorizzato solo se `override_attivo=true` |
+| `temperatura_esterna` | REAL | sì | temperatura corrente Open-Meteo; null se non disponibile |
+| `umidita_esterna` | REAL | sì | umidità corrente Open-Meteo; null se non disponibile |
 
-- Un record ad ogni ciclo, indipendentemente dal cambio stato (RF-18, sezione 5.3).
+- Un record viene scritto per ogni ciclo con lettura interna valida, indipendentemente dal cambio stato; viene scritto anche quando il comando ON/OFF fallisce, se le misure necessarie sono disponibili (RF-18, sezione 5.3). In caso di lettura interna fallita il ciclo termina prima della scrittura del `PollingLogRecord`.
 - **Date in UTC come TEXT ISO-8601:** SQLite non ha un tipo timestamp nativo; gli `Instant` sono persistiti come stringhe ISO-8601 UTC a precisione fissa (es. `2026-09-03T08:29:56.000000000Z`). L'ordinamento lessicografico di questo formato coincide con l'ordinamento cronologico, quindi le query per range e la cancellazione retention funzionano correttamente.
 - **Temperature come REAL:** SQLite non supporta `NUMERIC(4,1)`. I valori sono memorizzati come REAL e arrotondati a una cifra decimale a livello applicativo (`BigDecimal` scala 1, RNF-02) in lettura e scrittura.
 
@@ -496,7 +550,7 @@ Il database è un singolo file SQLite il cui percorso deriva da `databasePath` (
 | `temperatura_rilevata` | REAL | sì | ultima temp se disponibile |
 | `num_errori_consecutivi` | INTEGER | no | `num_errori_consecutivi` |
 
-- Un record ad ogni errore di comunicazione con API esterne (sezione 5.4).
+- Un record ad ogni errore di comunicazione con API esterne (sezione 6.4).
 
 ### 7.3 Repository
 
@@ -515,7 +569,10 @@ class PollingLogRepository {
 
 ### 7.4 Migrazioni (Flyway)
 
-Script `V1__create_log_tables.sql` con le due tabelle in sintassi SQLite (tipi come sopra) e indice su `data_ora` per efficienza di query per range e cancellazione retention. Flyway supporta SQLite; al primo avvio su file nuovo applica `V1` creando lo schema (RF-37).
+- `V1__create_log_tables.sql` crea `polling_log` e `error_log` in sintassi SQLite, con indice su `data_ora` per le query per intervallo e la retention.
+- `V2__add_climate_log_fields.sql` estende `polling_log` con `umidita_rilevata`, `temperatura_esterna` e `umidita_esterna`.
+
+Su un file nuovo Flyway applica V1 e poi V2; su un database già esistente applica solo la migrazione pendente, preservando i record precedenti. Le nuove colonne sono nullable per compatibilità con i record storici e con i cicli in cui il meteo esterno non è disponibile (RF-18, RF-37).
 
 ---
 
@@ -549,7 +606,40 @@ X-API-Key: <api-key-configurata>
 
 `ApiKeyAuthenticationFilter` valida l'header prima del dispatch MVC. Una chiave valida consente l'accesso; una chiave mancante o non presente in `api_keys` produce HTTP `401 Unauthorized`. La stessa regola vale per `/actuator/health` e per gli endpoint del profilo `mock`.
 
-### 9.1 Configurazione — RF-31, RF-32, RF-33
+### 9.1 Stato corrente — RF-40, RF-43
+
+| Metodo | Endpoint | Handler | Requisito | Note |
+|---|---|---|---|---|
+| `GET` | `/stato` | `CurrentStateController#getCurrentState` | RF-40, RF-43 | legge sensore, target, relay e meteo esterno a ogni richiesta |
+
+`CurrentStateService#read` esegue il seguente flusso sincrono per ogni richiesta:
+
+1. acquisisce l'istante corrente tramite `Clock` UTC;
+2. legge `SystemConfiguration` e il calendario correnti da `ConfigurationService`;
+3. legge `TemperatureReading` dal sensore tramite `TemperatureClient#leggiLettura`, ottenendo temperatura e umidità interne nella stessa chiamata;
+4. risolve `temperatura_target` tramite `TargetTemperatureResolver`: usa `temperatura_override` se l'override è attivo, altrimenti l'intervallo calendario UTC corrente;
+5. legge lo stato reale del relay tramite `RelayClient#leggiStato`;
+6. legge `WeatherReading` tramite `ExternalWeatherClient#leggiLettura`;
+7. mappa il modello interno `CurrentState` nel DTO `CurrentStateResponse`.
+
+Il contratto JSON è:
+
+```json
+{
+  "temperatura": 19.0,
+  "umidita": 50.0,
+  "temperatura_target": 20.5,
+  "relay_acceso": false,
+  "temperatura_esterna": 24.3,
+  "umidita_esterna": 68.6
+}
+```
+
+Tutte le umidità sono percentuali con una cifra decimale. `temperatura_target` è `null` se non è attivo alcun override e non esiste un intervallo calendario valido. Il relay non viene memorizzato dal servizio: il valore restituito proviene sempre dalla lettura del client relay. Il servizio non scrive log e non invia comandi al relay.
+
+Le eccezioni dei client sensore, relay o meteo risalgono al layer REST e vengono convertite da `RestExceptionHandler` in HTTP `500 Internal Server Error` con `ApiError`; l'autenticazione non valida viene invece bloccata dal filtro con HTTP `401`.
+
+### 9.2 Configurazione — RF-31, RF-32, RF-33
 
 | Metodo | Endpoint | Handler | Requisito | Note |
 |---|---|---|---|---|
@@ -578,26 +668,26 @@ Il payload del calendario usa un wrapper `giorni`, con esattamente le sette chia
 
 Il body di `PUT /config` ha i campi snake_case restituiti da `GET /config`. `database_path` deve rimanere invariato rispetto al valore di bootstrap; gli altri campi sono validati, applicati immediatamente e persistiti nel file JSON.
 
-### 9.2 Log di polling — RF-34
+### 9.3 Log di polling — RF-34
 
 | Metodo | Endpoint | Requisito |
 |---|---|---|
 | `GET` | `/log?da={data}&a={data}` | RF-34 |
 
-Regole parametri (sezione 7.2):
+Regole parametri (sezione 7.3):
 - Nessun parametro → log del **giorno corrente UTC** (`[startOfDayUtc, endOfDayUtc]`).
 - Solo `da` → da `da` fino a fine del giorno corrente UTC.
 - Range `[da, a]` inclusivo su entrambi gli estremi.
 
-### 9.3 Log di errore — RF-35
+### 9.4 Log di errore — RF-35
 
 | Metodo | Endpoint | Requisito |
 |---|---|---|
 | `GET` | `/log/errori?da={data}&a={data}` | RF-35 |
 
-Stesse regole di default e range del punto 9.2 (sezione 7.3).
+Stesse regole di default e range del punto 9.3 (sezione 7.4).
 
-### 9.4 Gestione errori HTTP
+### 9.5 Gestione errori HTTP
 
 `@RestControllerAdvice` centralizzato:
 - `400` per body/parametri non validi (Bean Validation).
@@ -619,6 +709,10 @@ termostato:
   ntfy-url: https://ntfy.sh
   ntfy-topic: sliverd
   debug-mode: false
+  notifiche-errori-abilitate: true
+  meteo-esterno-url: https://api.open-meteo.com
+  meteo-esterno-latitudine: 37.6167
+  meteo-esterno-longitudine: 15.1667
   sensore:
     url: http://sensore.local
   relay:
@@ -656,16 +750,21 @@ Il bean `DatabaseConfiguration` costruisce il `SQLiteDataSource` direttamente da
 | Livello | Oggetto | Strumenti |
 |---|---|---|
 | Unit | `TargetTemperatureResolver` (calendario/override, UTC, RF-07/RF-10/RF-24/RF-25) | JUnit 5 |
+| Unit | `CurrentStateService` (letture temperatura/umidità sensore, meteo esterno, relay, target override/calendario, target assente) | JUnit 5 + Mockito |
+| Unit | `ExternalWeatherClient` (path Open-Meteo, coordinate, parsing `current`, normalizzazione umidità, errori payload) | JUnit 5 + Mockito |
 | Unit | `calcolaDecisione` isteresi (RF-08/RF-09, zona neutra) | JUnit 5 (parametrizzati) |
 | Unit | `ErrorTrackingService` (soglia, reset, caso TURN_OFF RF-16/RF-17) | JUnit 5 |
 | Unit | `ApiKeyAuthenticationFilter` (chiave valida, assente, non autorizzata) | JUnit 5 + MockHttpServlet |
-| Integrazione | Client `@HttpExchange` (temp/relay/ntfy) | RestClient stub / MockWebServer |
-| Integrazione | Repository + retention (RF-27) | SQLite su file temporaneo (stesso motore della produzione) |
+| Integrazione | Client HTTP (`TemperatureClient`, `ExternalWeatherClient`, relay, ntfy) | RestClient stub / MockWebServer |
+| Integrazione | `NotificationService` (errori abilitati/disabilitati, info controllate da `debugMode`) | JUnit 5 + Mockito |
+| Integrazione | Repository + migrazioni V1/V2 + retention (RF-18, RF-19, RF-27, RF-44) | SQLite su file temporaneo (stesso motore della produzione) |
 | Integrazione | Inizializzazione DB: creazione file se assente (RF-37) | Smoke test jar + file temporaneo |
-| Integrazione | Controller REST (RF-31..RF-35, default giorno corrente) | Smoke test HTTP + test `UtcDateRange` |
-| End-to-end | Ciclo di polling completo con stub esterni | Test Mockito del `ThermostatControlService` |
+| Integrazione | Controller REST (RF-31..RF-35, RF-40, default giorno corrente) | Smoke test HTTP + test `UtcDateRange` + test servizio stato |
+| End-to-end | Ciclo di polling completo con stub sensore/relay e client meteo (lettura interna completa, best-effort esterno, log e stato REST) | Test Mockito del `ThermostatControlService` + `scripts/e2e-mock.ps1` |
 
 Casi limite obbligatori da coprire:
+- Errore lettura Open-Meteo → controllo locale continuato, `READ_WEATHER`, misure esterne null nel polling log.
+- Sensore con temperatura e umidità mancanti o fuori dominio.
 - Avvio con lettura relay fallita (RF-22).
 - Nessun intervallo attivo → caldaia spenta (RF-10).
 - Zona neutra → stato invariato letto dal relay (RF-23, sezione 8.3).
@@ -701,20 +800,22 @@ Casi limite obbligatori da coprire:
 | RF-06, RF-07 | Sez. 4.2 (`TargetTemperatureResolver`) |
 | RF-10 | Sez. 4.2 / 6.3 (target assente → OFF) |
 | RF-11 | Sez. 6.2 (`PollingScheduler`) |
-| RF-12 | Sez. 5.2 (`TemperatureClient`) |
-| RF-13, RF-21 | Sez. 5.3 (`RelayClient`) |
-| RF-14 | Sez. 5.1 (URL configurabili) |
-| RF-15, RF-29 | Sez. 5.4 / 6.4 (notifiche errore) |
-| RF-16 | Sez. 6.4 (soglia → OFF) |
+| RF-12, RF-41 | Sez. 5.2 (`TemperatureClient`, lettura completa nella stessa risposta) |
+| RF-13, RF-21 | Sez. 5.4 (`RelayClient`) |
+| RF-14 | Sez. 5.1 (URL configurabili e factory runtime) |
+| RF-15, RF-29, RF-45 | Sez. 5.5 / 6.4 (notifiche errore condizionali) |
+| RF-16 | Sez. 6.4 (soglia → OFF per errori di controllo) |
 | RF-17 | Sez. 6.4 (retry spegnimento) |
-| RF-18, RF-19 | Sez. 7.1 (`polling_log`) |
+| RF-18, RF-19, RF-44 | Sez. 7.1 / 7.3 (`polling_log` e campi climatici) |
 | RF-20 | Sez. 7.2 (`error_log`) |
-| RF-22, RF-23 | Sez. 6.1 / 5.3 (stato dal relay, no RAM) |
+| RF-22, RF-23 | Sez. 6.1 / 5.4 (stato dal relay, no RAM) |
 | RF-24, RF-25 | Sez. 4.2 (UTC) |
 | RF-26, RF-27 | Sez. 8 (retention scheduler) |
-| RF-28, RF-30 | Sez. 5.4 (ntfy, debug_mode) |
-| RF-31..RF-35 | Sez. 9 (API REST) |
-| RF-36, RF-37 | Sez. 7.0 (SQLite, init automatica del file) |
+| RF-28, RF-30 | Sez. 5.5 (ntfy, `debug_mode`) |
+| RF-31..RF-35 | Sez. 9.2..9.4 (API REST configurazione e log) |
+| RF-40, RF-43 | Sez. 9.1 (`CurrentStateController`, `CurrentStateService`, `CurrentStateResponse`) |
+| RF-42 | Sez. 5.3 (`ExternalWeatherClient`, Open-Meteo e coordinate) |
+| RF-36, RF-37 | Sez. 7.0 / 7.4 (SQLite, init automatica e migrazioni V1/V2) |
 | RF-38, RF-39 | Sez. 3.4 / 9.0 (`SystemConfiguration.apiKeys`, `ApiKeyAuthenticationFilter`) |
 | RNF-01 | Sez. 3.2 (`ConfigurationService`) |
 | RNF-02 | Sez. 3.1 / 7 (`BigDecimal` scala 1, colonne REAL arrotondate) |

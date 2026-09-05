@@ -6,6 +6,9 @@ import com.termostato.domain.model.SystemConfiguration;
 import com.termostato.external.notification.NotificationService;
 import com.termostato.external.relay.RelayClient;
 import com.termostato.external.temperature.TemperatureClient;
+import com.termostato.external.temperature.TemperatureReading;
+import com.termostato.external.weather.ExternalWeatherClient;
+import com.termostato.external.weather.WeatherReading;
 import com.termostato.persistence.ErrorLogRecord;
 import com.termostato.persistence.ErrorLogRepository;
 import com.termostato.persistence.PollingLogRecord;
@@ -25,6 +28,7 @@ public class ThermostatControlService {
 
     private static final Logger log = LoggerFactory.getLogger(ThermostatControlService.class);
     private static final String READ_TEMP_MESSAGE = "Impossibile leggere la temperatura dal sensore";
+    private static final String READ_WEATHER_MESSAGE = "Impossibile leggere temperatura e umidità esterne";
     private static final String READ_RELAY_MESSAGE = "Impossibile leggere lo stato della caldaia";
     private static final String TURN_ON_MESSAGE = "Impossibile inviare il comando di accensione alla caldaia";
     private static final String TURN_OFF_MESSAGE = "Impossibile inviare il comando di spegnimento alla caldaia";
@@ -34,6 +38,7 @@ public class ThermostatControlService {
     private final HeatingDecisionCalculator decisionCalculator;
     private final ErrorTrackingService errorTracking;
     private final TemperatureClient temperatureClient;
+    private final ExternalWeatherClient externalWeatherClient;
     private final RelayClient relayClient;
     private final NotificationService notificationService;
     private final PollingLogRepository pollingLogRepository;
@@ -47,6 +52,7 @@ public class ThermostatControlService {
                                     HeatingDecisionCalculator decisionCalculator,
                                     ErrorTrackingService errorTracking,
                                     TemperatureClient temperatureClient,
+                                    ExternalWeatherClient externalWeatherClient,
                                     RelayClient relayClient,
                                     NotificationService notificationService,
                                     PollingLogRepository pollingLogRepository,
@@ -57,6 +63,7 @@ public class ThermostatControlService {
         this.decisionCalculator = decisionCalculator;
         this.errorTracking = errorTracking;
         this.temperatureClient = temperatureClient;
+        this.externalWeatherClient = externalWeatherClient;
         this.relayClient = relayClient;
         this.notificationService = notificationService;
         this.pollingLogRepository = pollingLogRepository;
@@ -97,13 +104,23 @@ public class ThermostatControlService {
             return;
         }
 
-        BigDecimal roomTemperature;
+        TemperatureReading indoorReading;
         try {
-            roomTemperature = temperatureClient.leggiTemperatura();
+            indoorReading = temperatureClient.leggiLettura();
         } catch (RuntimeException exception) {
             recordError(ErrorCategory.READ_TEMP, READ_TEMP_MESSAGE, null, null,
                     now, currentConfiguration, true);
             return;
+        }
+        BigDecimal roomTemperature = indoorReading.temperatura();
+
+        WeatherReading outdoorReading = null;
+        try {
+            outdoorReading = externalWeatherClient.leggiLettura();
+        } catch (RuntimeException exception) {
+            // Il meteo esterno è informativo: non deve interrompere il controllo locale.
+            recordError(ErrorCategory.READ_WEATHER, READ_WEATHER_MESSAGE, null, roomTemperature,
+                    now, currentConfiguration, false);
         }
 
         Optional<BigDecimal> target = targetResolver.resolve(
@@ -132,7 +149,7 @@ public class ThermostatControlService {
             } catch (RuntimeException exception) {
                 recordError(ErrorCategory.TURN_ON, TURN_ON_MESSAGE, currentRelayState,
                         roomTemperature, now, currentConfiguration, true);
-                savePollingLog(now, currentRelayState, roomTemperature, target, currentConfiguration);
+                savePollingLog(now, currentRelayState, indoorReading, target, outdoorReading, currentConfiguration);
                 return;
             }
         } else if (decision == HeatingDecision.OFF && currentRelayState) {
@@ -147,12 +164,12 @@ public class ThermostatControlService {
                 spegnimentoPendente.set(true);
                 recordError(ErrorCategory.TURN_OFF, TURN_OFF_MESSAGE, currentRelayState,
                         roomTemperature, now, currentConfiguration, false);
-                savePollingLog(now, currentRelayState, roomTemperature, target, currentConfiguration);
+                savePollingLog(now, currentRelayState, indoorReading, target, outdoorReading, currentConfiguration);
                 return;
             }
         }
 
-        savePollingLog(now, currentRelayState, roomTemperature, target, currentConfiguration);
+        savePollingLog(now, currentRelayState, indoorReading, target, outdoorReading, currentConfiguration);
         errorTracking.resetAll();
     }
 
@@ -204,18 +221,22 @@ public class ThermostatControlService {
 
     private void savePollingLog(Instant timestamp,
                                 boolean boilerState,
-                                BigDecimal roomTemperature,
+                                TemperatureReading indoorReading,
                                 Optional<BigDecimal> target,
+                                WeatherReading outdoorReading,
                                 SystemConfiguration currentConfiguration) {
         try {
             pollingLogRepository.save(new PollingLogRecord(
                     null,
                     timestamp,
                     boilerState,
-                    roomTemperature,
+                    indoorReading.temperatura(),
+                    indoorReading.umidita(),
                     target.orElse(null),
                     currentConfiguration.overrideAttivo(),
-                    currentConfiguration.overrideAttivo() ? currentConfiguration.temperaturaOverride() : null));
+                    currentConfiguration.overrideAttivo() ? currentConfiguration.temperaturaOverride() : null,
+                    outdoorReading == null ? null : outdoorReading.temperatura(),
+                    outdoorReading == null ? null : outdoorReading.umidita()));
         } catch (RuntimeException exception) {
             log.error("Impossibile salvare il log di polling", exception);
         }

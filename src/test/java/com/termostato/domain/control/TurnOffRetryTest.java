@@ -6,6 +6,8 @@ import com.termostato.domain.model.SystemConfiguration;
 import com.termostato.external.notification.NotificationService;
 import com.termostato.external.relay.RelayClient;
 import com.termostato.external.temperature.TemperatureClient;
+import com.termostato.external.temperature.TemperatureReading;
+import com.termostato.external.weather.ExternalWeatherClient;
 import com.termostato.persistence.ErrorLogRepository;
 import com.termostato.persistence.PollingLogRepository;
 import org.junit.jupiter.api.Test;
@@ -28,6 +30,7 @@ class TurnOffRetryTest {
     void retrySpegnimentoVieneEseguitoAdOgniCiclo() {
         ConfigurationService configuration = mock(ConfigurationService.class);
         TemperatureClient temperature = mock(TemperatureClient.class);
+        ExternalWeatherClient externalWeather = mock(ExternalWeatherClient.class);
         RelayClient relay = mock(RelayClient.class);
         NotificationService notification = mock(NotificationService.class);
         PollingLogRepository polling = mock(PollingLogRepository.class);
@@ -38,12 +41,13 @@ class TurnOffRetryTest {
         when(configuration.current()).thenReturn(config);
         when(configuration.currentCalendario()).thenReturn(Calendario.vuoto());
         when(relay.leggiStato()).thenReturn(true);
-        when(temperature.leggiTemperatura()).thenReturn(new BigDecimal("21.0"));
+        when(temperature.leggiLettura()).thenReturn(
+                new TemperatureReading(new BigDecimal("21.0"), new BigDecimal("50.0")));
         doThrow(new RuntimeException("offline")).when(relay).inviaComando(false);
 
         ThermostatControlService service = new ThermostatControlService(
                 configuration, new TargetTemperatureResolver(), new HeatingDecisionCalculator(),
-                new ErrorTrackingService(), temperature, relay, notification, polling, errors,
+                new ErrorTrackingService(), temperature, externalWeather, relay, notification, polling, errors,
                 Clock.fixed(Instant.parse("2026-09-03T06:30:00Z"), ZoneOffset.UTC));
 
         service.initializeRelayAtStartup();

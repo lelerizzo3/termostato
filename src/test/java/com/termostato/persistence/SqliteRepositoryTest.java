@@ -26,7 +26,8 @@ class SqliteRepositoryTest {
         Instant second = Instant.parse("2026-09-03T08:00:00.100Z");
 
         polling.save(new PollingLogRecord(null, first, true, new BigDecimal("19.3"),
-                new BigDecimal("20.5"), false, null));
+                new BigDecimal("50.2"), new BigDecimal("20.5"), false, null,
+                new BigDecimal("15.4"), new BigDecimal("70.6")));
         errors.save(new ErrorLogRecord(null, second, "errore", false, new BigDecimal("19.3"), 1));
 
         List<PollingLogRecord> records = polling.findBetween(first, second.plusNanos(1));
@@ -34,6 +35,9 @@ class SqliteRepositoryTest {
 
         assertEquals(1, records.size());
         assertEquals(first, records.getFirst().dataOra());
+        assertEquals(new BigDecimal("50.2"), records.getFirst().umiditaRilevata());
+        assertEquals(new BigDecimal("15.4"), records.getFirst().temperaturaEsterna());
+        assertEquals(new BigDecimal("70.6"), records.getFirst().umiditaEsterna());
         assertEquals(1, errorRecords.size());
         assertEquals(second, errorRecords.getFirst().dataOra());
         assertEquals(1, polling.deleteBefore(second));
@@ -50,9 +54,12 @@ class SqliteRepositoryTest {
                     data_ora TEXT NOT NULL,
                     caldaia_accesa INTEGER NOT NULL,
                     temperatura_rilevata REAL NOT NULL,
+                    umidita_rilevata REAL,
                     temperatura_target REAL,
                     override_attivo INTEGER NOT NULL,
-                    temperatura_override REAL
+                    temperatura_override REAL,
+                    temperatura_esterna REAL,
+                    umidita_esterna REAL
                 )
                 """);
         jdbc.execute("""

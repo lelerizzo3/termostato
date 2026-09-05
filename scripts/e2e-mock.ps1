@@ -63,16 +63,29 @@ try {
 
     Invoke-RestMethod -Uri "$baseUrl/mock/reset" -Method Post -Headers $headers | Out-Null
     $initial = Get-Json '/mock/state'
-    if ($initial.temperatura -ne 19.0 -or $initial.relay_acceso) {
+    $initialCurrent = Get-Json '/stato'
+    if ($initial.temperatura -ne 19.0 -or $initial.umidita -ne 50.0 -or $initial.relay_acceso) {
         throw "Stato mock iniziale inatteso: $($initial | ConvertTo-Json -Compress)"
+    }
+    if ($initialCurrent.temperatura -ne 19.0 -or $initialCurrent.umidita -ne 50.0 `
+        -or $initialCurrent.temperatura_target -ne 20.5 `
+        -or $null -eq $initialCurrent.temperatura_esterna `
+        -or $null -eq $initialCurrent.umidita_esterna) {
+        throw "Stato corrente iniziale inatteso: $($initialCurrent | ConvertTo-Json -Compress)"
     }
 
     Wait-For 'accensione relay sotto target' {
         (Get-Json '/mock/state').relay_acceso -eq $true
     }
     $heated = Get-Json '/mock/state'
+    $heatedCurrent = Get-Json '/stato'
+    if (!$heatedCurrent.relay_acceso -or $heatedCurrent.umidita -ne 50.0 `
+        -or $heatedCurrent.temperatura_target -ne 20.5 `
+        -or $null -eq $heatedCurrent.umidita_esterna) {
+        throw "Stato corrente acceso inatteso: $($heatedCurrent | ConvertTo-Json -Compress)"
+    }
 
-    $newTemperature = @{ temperatura = 21.0 } | ConvertTo-Json
+    $newTemperature = @{ temperatura = 21.0; umidita = 50.0 } | ConvertTo-Json
     Invoke-RestMethod -Uri "$baseUrl/mock/temperature" -Method Put `
         -Headers $headers -ContentType 'application/json' -Body $newTemperature | Out-Null
 
@@ -80,6 +93,13 @@ try {
         (Get-Json '/mock/state').relay_acceso -eq $false
     }
     $cooled = Get-Json '/mock/state'
+    $cooledCurrent = Get-Json '/stato'
+    if ($cooledCurrent.temperatura -ne 21.0 -or $cooledCurrent.umidita -ne 50.0 `
+        -or $cooledCurrent.relay_acceso -or $cooledCurrent.temperatura_target -ne 20.5 `
+        -or $null -eq $cooledCurrent.temperatura_esterna `
+        -or $null -eq $cooledCurrent.umidita_esterna) {
+        throw "Stato corrente spento inatteso: $($cooledCurrent | ConvertTo-Json -Compress)"
+    }
 
     Wait-For 'registrazione log del ciclo spento' {
         $currentLogs = @(Get-Json '/log')
