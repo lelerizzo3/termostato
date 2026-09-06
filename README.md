@@ -95,6 +95,14 @@ Gli endpoint disponibili sono:
 - `GET /mock/state` — stato utile allo scenario E2E;
 - `POST /mock/reset` — ripristino dello stato iniziale.
 
-Il controllo usa comunque i client REST normali, puntati a `http://localhost:8080`. Il profilo mock configura la chiave `e2e-test-key`; lo script la invia nell'header `X-API-Key` e verifica che una chiave errata produca HTTP 401. Lo stato del relay mantenuto in RAM appartiene esclusivamente al dispositivo mock; il controllo continua a leggere lo stato dal client relay e non memorizza lo stato della caldaia.
+Il controllo usa comunque i client REST normali, puntati a `http://localhost:8080`. Il profilo mock configura la chiave `e2e-test-key`; lo script la invia nell'header `X-API-Key` e verifica che una chiave errata produca HTTP 401. La configurazione persistita in `data/mock-config.json` prevale sui default di `application-mock.yml`: se il file esiste già e contiene `api_keys` vuote o diverse, `e2e-test-key` non viene aggiunta automaticamente. Per ripristinare la configurazione mock iniziale, arrestare l'applicazione e spostare il file (oppure modificare manualmente `api_keys`):
+
+```powershell
+if (Test-Path .\data\mock-config.json) {
+  Move-Item .\data\mock-config.json .\data\mock-config.json.bak -Force
+}
+```
+
+Al riavvio il file viene ricreato con `e2e-test-key`. Lo stato del relay mantenuto in RAM appartiene esclusivamente al dispositivo mock; il controllo continua a leggere lo stato dal client relay e non memorizza lo stato della caldaia.
 
 Il client ntfy non viene simulato: il profilo mantiene `https://ntfy.sh`. Lo script lascia `debug_mode=false` per non inviare notifiche informative durante il test; usare `-DebugNtfy` per abilitare l'invio reale delle notifiche di accensione/spegnimento.
