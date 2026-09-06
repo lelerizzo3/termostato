@@ -75,16 +75,20 @@ Il contratto tecnico completo è in [`docs/specifiche-tecniche.md`](docs/specifi
 
 ## Profilo mock e test E2E
 
-Per eseguire un primo test senza sensore o relay fisici:
+Per eseguire il test mock è necessario attivare il profilo Spring `mock`: `debug-mode` controlla esclusivamente le notifiche informative ntfy e non registra gli endpoint mock.
 
 ```powershell
 mvn clean package
+java -jar target/termostato.jar --spring.profiles.active=mock --termostato.debug-mode=true
+```
+
+Lo script E2E equivalente è:
+
+```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\e2e-mock.ps1
 ```
 
-Lo script avvia il jar con il profilo Spring `mock`, che espone nello stesso processo:
-
-- `GET /temperature` — risposta del sensore simulato;
+Gli endpoint disponibili sono:
 - `GET /relay` — stato del relay simulato;
 - `POST /relay` — comando del relay simulato;
 - `PUT /mock/temperature` — modifica temperatura e umidità simulate;

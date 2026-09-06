@@ -9,6 +9,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -42,6 +43,11 @@ public class RestExceptionHandler {
     @ExceptionHandler(ConfigurationPersistenceException.class)
     public ResponseEntity<ApiError> persistenceFailure(ConfigurationPersistenceException exception) {
         return response(HttpStatus.INTERNAL_SERVER_ERROR, exception.getMessage());
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiError> notFound(NoResourceFoundException exception) {
+        return response(HttpStatus.NOT_FOUND, "Risorsa non trovata");
     }
 
     @ExceptionHandler(Exception.class)
