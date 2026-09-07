@@ -10,13 +10,15 @@ info:
 
     I nomi JSON seguono la strategia `SNAKE_CASE` configurata nel backend.
     Le date e i timestamp sono espressi in UTC.
+    Le ore degli intervalli del calendario sono invece interpretate nel
+    `fuso_orario` configurato, con regole DST controllate da `ora_legale`.
 
     Gli endpoint `/temperature`, `/relay` e `/mock/*` sono disponibili solo
     quando è attivo il profilo Spring `mock`; simulano il sensore e il relay
     per lo scenario E2E. Il client ntfy e gli endpoint configurati per i
     dispositivi fisici sono integrazioni outbound e non fanno parte di questa
     specifica inbound.
-  version: 1.1.0
+  version: 1.2.0
   contact:
     name: Team Termostato
 servers:
@@ -62,6 +64,8 @@ paths:
                 ntfy_url: https://ntfy.sh
                 ntfy_topic: sliverd
                 debug_mode: false
+                fuso_orario: Europe/Rome
+                ora_legale: true
                 notifiche_errori_abilitate: true
                 meteo_esterno_url: https://api.open-meteo.com
                 meteo_esterno_latitudine: 37.6167
@@ -103,6 +107,8 @@ paths:
               ntfy_url: https://ntfy.sh
               ntfy_topic: sliverd
               debug_mode: false
+              fuso_orario: Europe/Rome
+              ora_legale: true
               notifiche_errori_abilitate: true
               meteo_esterno_url: https://api.open-meteo.com
               meteo_esterno_latitudine: 37.6167
@@ -162,7 +168,9 @@ paths:
         Sostituisce e persiste il calendario. Il payload deve contenere
         esattamente i sette giorni canonici. Gli intervalli dello stesso giorno
         non possono sovrapporsi e `ora_inizio` deve precedere `ora_fine`.
-        Gli orari sono interpretati in UTC; la fine dell'intervallo è esclusa.
+        Gli orari sono interpretati nel `fuso_orario` configurato; quando
+        `ora_legale` è true vengono applicate automaticamente le regole CET/CEST.
+        La fine dell'intervallo è esclusa.
       operationId: updateCalendar
       requestBody:
         required: true
@@ -261,7 +269,8 @@ paths:
         lo stato dal relay e temperatura/umidità esterne da Open-Meteo.
         `temperatura_target` è il target risolto dalla configurazione al momento
         della richiesta: override se attivo, altrimenti intervallo calendario
-        UTC corrente. È `null` quando non esiste alcun target attivo.
+        corrente nel `fuso_orario` configurato, con eventuale ora legale.
+        È `null` quando non esiste alcun target attivo.
       operationId: getCurrentState
       responses:
         '200':
@@ -623,8 +632,9 @@ components:
       type: object
       description: |
         Configurazione runtime completa. I valori numerici di temperatura
-        devono avere una sola cifra decimale. Se `override_attivo` è true,
-        `temperatura_override` è obbligatoria; se è false può essere null.
+        devono avere una sola cifra decimale. `fuso_orario` è un identificatore
+        IANA; `ora_legale` abilita le regole DST automatiche del fuso. Se
+        `override_attivo` è true, `temperatura_override` è obbligatoria; se è false può essere null.
       additionalProperties: false
       required:
         - soglia_attivazione
@@ -636,6 +646,8 @@ components:
         - ntfy_url
         - ntfy_topic
         - debug_mode
+        - fuso_orario
+        - ora_legale
         - notifiche_errori_abilitate
         - meteo_esterno_url
         - meteo_esterno_latitudine
@@ -696,6 +708,18 @@ components:
           type: boolean
           description: Abilita le notifiche informative di accensione e spegnimento.
           example: false
+        fuso_orario:
+          type: string
+          minLength: 1
+          pattern: '^[A-Za-z0-9._+-]+(?:/[A-Za-z0-9._+-]+)*$'
+          description: Identificatore IANA del fuso usato dal calendario.
+          default: Europe/Rome
+          example: Europe/Rome
+        ora_legale:
+          type: boolean
+          description: Se true applica automaticamente le regole DST del fuso; se false usa l'offset standard.
+          default: true
+          example: true
         notifiche_errori_abilitate:
           type: boolean
           description: Abilita le notifiche degli errori tramite ntfy.
@@ -797,12 +821,12 @@ components:
       properties:
         ora_inizio:
           type: string
-          description: Ora UTC di inizio, inclusiva. Sono accettati `HH:mm` e `HH:mm:ss`.
+          description: Ora locale di inizio nel `fuso_orario` configurato, inclusiva. Sono accettati `HH:mm` e `HH:mm:ss`.
           pattern: '^(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9](?:\.[0-9]{1,9})?)?$'
           example: '06:00'
         ora_fine:
           type: string
-          description: Ora UTC di fine, esclusiva; deve essere successiva a `ora_inizio`.
+          description: Ora locale di fine nel `fuso_orario` configurato, esclusiva; deve essere successiva a `ora_inizio`.
           pattern: '^(?:[01][0-9]|2[0-3]):[0-5][0-9](?::[0-5][0-9](?:\.[0-9]{1,9})?)?$'
           example: '08:00'
         temperatura_target:

@@ -1,6 +1,8 @@
 package com.termostato.domain.model;
 
 import java.math.BigDecimal;
+import java.time.DateTimeException;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Objects;
 
@@ -21,12 +23,16 @@ public record SystemConfiguration(
         String meteoEsternoUrl,
         BigDecimal meteoEsternoLatitudine,
         BigDecimal meteoEsternoLongitudine,
-        boolean notificheErroriAbilitate) {
+        boolean notificheErroriAbilitate,
+        String fusoOrario,
+        boolean oraLegale) {
 
     public static final String DEFAULT_METEO_ESTERNO_URL = "https://api.open-meteo.com";
     public static final BigDecimal DEFAULT_METEO_ESTERNO_LATITUDINE = new BigDecimal("37.6167");
     public static final BigDecimal DEFAULT_METEO_ESTERNO_LONGITUDINE = new BigDecimal("15.1667");
     public static final boolean DEFAULT_NOTIFICHE_ERRORI_ABILITATE = true;
+    public static final String DEFAULT_FUSO_ORARIO = "Europe/Rome";
+    public static final boolean DEFAULT_ORA_LEGALE = true;
 
     public SystemConfiguration {
         sogliaAttivazione = TemperatureRules.requireNonNegativeOneDecimal("sogliaAttivazione", sogliaAttivazione);
@@ -55,6 +61,32 @@ public record SystemConfiguration(
                 new BigDecimal("-90"), new BigDecimal("90"), DEFAULT_METEO_ESTERNO_LATITUDINE);
         meteoEsternoLongitudine = coordinate("meteoEsternoLongitudine", meteoEsternoLongitudine,
                 new BigDecimal("-180"), new BigDecimal("180"), DEFAULT_METEO_ESTERNO_LONGITUDINE);
+        fusoOrario = validZoneId(fusoOrario);
+    }
+
+    /** Compatibilità con il costruttore completo precedente all'aggiunta di timezone/DST. */
+    public SystemConfiguration(BigDecimal sogliaAttivazione,
+                               boolean overrideAttivo,
+                               BigDecimal temperaturaOverride,
+                               int intervalloPollingSecondi,
+                               int maxErroriConsecutivi,
+                               int retentionLogGiorni,
+                               String ntfyUrl,
+                               String ntfyTopic,
+                               boolean debugMode,
+                               String sensoreUrl,
+                               String relayUrl,
+                               String databasePath,
+                               List<String> apiKeys,
+                               String meteoEsternoUrl,
+                               BigDecimal meteoEsternoLatitudine,
+                               BigDecimal meteoEsternoLongitudine,
+                               boolean notificheErroriAbilitate) {
+        this(sogliaAttivazione, overrideAttivo, temperaturaOverride, intervalloPollingSecondi,
+                maxErroriConsecutivi, retentionLogGiorni, ntfyUrl, ntfyTopic, debugMode,
+                sensoreUrl, relayUrl, databasePath, apiKeys, meteoEsternoUrl,
+                meteoEsternoLatitudine, meteoEsternoLongitudine, notificheErroriAbilitate,
+                DEFAULT_FUSO_ORARIO, DEFAULT_ORA_LEGALE);
     }
 
     /** Compatibilità con i costruttori usati dal dominio/test con API-key configurate. */
@@ -75,7 +107,8 @@ public record SystemConfiguration(
                 maxErroriConsecutivi, retentionLogGiorni, ntfyUrl, ntfyTopic, debugMode,
                 sensoreUrl, relayUrl, databasePath, apiKeys,
                 DEFAULT_METEO_ESTERNO_URL, DEFAULT_METEO_ESTERNO_LATITUDINE,
-                DEFAULT_METEO_ESTERNO_LONGITUDINE, DEFAULT_NOTIFICHE_ERRORI_ABILITATE);
+                DEFAULT_METEO_ESTERNO_LONGITUDINE, DEFAULT_NOTIFICHE_ERRORI_ABILITATE,
+                DEFAULT_FUSO_ORARIO, DEFAULT_ORA_LEGALE);
     }
 
     /** Compatibilità con i costruttori usati dal dominio/test senza autenticazione configurata. */
@@ -95,7 +128,8 @@ public record SystemConfiguration(
                 maxErroriConsecutivi, retentionLogGiorni, ntfyUrl, ntfyTopic, debugMode,
                 sensoreUrl, relayUrl, databasePath, List.of(),
                 DEFAULT_METEO_ESTERNO_URL, DEFAULT_METEO_ESTERNO_LATITUDINE,
-                DEFAULT_METEO_ESTERNO_LONGITUDINE, DEFAULT_NOTIFICHE_ERRORI_ABILITATE);
+                DEFAULT_METEO_ESTERNO_LONGITUDINE, DEFAULT_NOTIFICHE_ERRORI_ABILITATE,
+                DEFAULT_FUSO_ORARIO, DEFAULT_ORA_LEGALE);
     }
 
     private static List<String> normalizeApiKeys(List<String> values) {
@@ -111,6 +145,16 @@ public record SystemConfiguration(
                 })
                 .distinct()
                 .toList();
+    }
+
+    private static String validZoneId(String value) {
+        String normalized = textOrDefault(value, DEFAULT_FUSO_ORARIO);
+        try {
+            ZoneId.of(normalized);
+            return normalized;
+        } catch (DateTimeException exception) {
+            throw new IllegalArgumentException("fusoOrario non valido: " + normalized, exception);
+        }
     }
 
     private static BigDecimal coordinate(String fieldName,

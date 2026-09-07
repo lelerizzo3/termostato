@@ -112,8 +112,13 @@ public class ConfigurationService implements InitializingBean {
                     && !rawJson.contains("\"meteoEsternoLongitudine\"");
             boolean notificheErroriMissing = !rawJson.contains("\"notifiche_errori_abilitate\"")
                     && !rawJson.contains("\"notificheErroriAbilitate\"");
+            boolean fusoOrarioMissing = !rawJson.contains("\"fuso_orario\"")
+                    && !rawJson.contains("\"fusoOrario\"");
+            boolean oraLegaleMissing = !rawJson.contains("\"ora_legale\"")
+                    && !rawJson.contains("\"oraLegale\"");
             boolean newConfigurationFieldsMissing = apiKeysMissing || meteoUrlMissing
-                    || meteoLatitudineMissing || meteoLongitudineMissing || notificheErroriMissing;
+                    || meteoLatitudineMissing || meteoLongitudineMissing || notificheErroriMissing
+                    || fusoOrarioMissing || oraLegaleMissing;
             var effectiveApiKeys = apiKeysMissing ? defaults.apiKeys() : loaded.apiKeys();
             var effectiveMeteoUrl = meteoUrlMissing ? defaults.meteoEsternoUrl() : loaded.meteoEsternoUrl();
             var effectiveMeteoLatitudine = meteoLatitudineMissing
@@ -122,6 +127,10 @@ public class ConfigurationService implements InitializingBean {
                     ? defaults.meteoEsternoLongitudine() : loaded.meteoEsternoLongitudine();
             var effectiveNotificheErrori = notificheErroriMissing
                     ? defaults.notificheErroriAbilitate() : loaded.notificheErroriAbilitate();
+            var effectiveFusoOrario = fusoOrarioMissing
+                    ? defaults.fusoOrario() : loaded.fusoOrario();
+            var effectiveOraLegale = oraLegaleMissing
+                    ? defaults.oraLegale() : loaded.oraLegale();
             // Il path del database determina il datasource prima del caricamento JSON: resta bootstrap-only.
             if (!defaults.databasePath().equals(loaded.databasePath()) || newConfigurationFieldsMissing) {
                 loaded = new SystemConfiguration(
@@ -130,7 +139,7 @@ public class ConfigurationService implements InitializingBean {
                         loaded.ntfyUrl(), loaded.ntfyTopic(), loaded.debugMode(), loaded.sensoreUrl(),
                         loaded.relayUrl(), defaults.databasePath(), effectiveApiKeys,
                         effectiveMeteoUrl, effectiveMeteoLatitudine, effectiveMeteoLongitudine,
-                        effectiveNotificheErrori);
+                        effectiveNotificheErrori, effectiveFusoOrario, effectiveOraLegale);
                 if (newConfigurationFieldsMissing) {
                     try {
                         writeJson(path, loaded);

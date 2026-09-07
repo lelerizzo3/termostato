@@ -175,6 +175,8 @@ Mappa i parametri della sezione 3 delle specifiche funzionali. Legato con `@Conf
 | `ntfyUrl` | `String` | RF-28 | `https://ntfy.sh` | `@NotBlank` |
 | `ntfyTopic` | `String` | RF-28 | `sliverd` | `@NotBlank` |
 | `debugMode` | `boolean` | RF-29, RF-30 | `false` | — |
+| `fusoOrario` | `String` | RF-46 | `Europe/Rome` | identificatore IANA valido |
+| `oraLegale` | `boolean` | RF-47 | `true` | true = regole DST automatiche; false = offset standard |
 | `sensore.url` | `String` | RF-12, RF-14 | — | `@NotBlank` (URL) |
 | `relay.url` | `String` | RF-13, RF-14, RF-21 | — | `@NotBlank` (URL) |
 | `databasePath` | `String` | RF-36, RF-37 | `./data/termostato.db` | `@NotBlank` (percorso file SQLite) |
@@ -222,7 +224,7 @@ Al riavvio successivo si applica di nuovo la logica di caricamento sopra, quindi
 
 - Config mancante → si applicano i default della tabella 3.1.
 - Config malformata → l'errore di parsing viene loggato, si mantiene l'ultima config valida (o i default all'avvio) e si invia notifica ntfy di errore.
-- Un `config.json` precedente privo di `meteo_esterno_url`, coordinate, `notifiche_errori_abilitate` o `api_keys` viene completato usando i default YAML e riscritto atomicamente quando possibile.
+- Un `config.json` precedente privo di `meteo_esterno_url`, coordinate, `notifiche_errori_abilitate`, `fuso_orario`, `ora_legale` o `api_keys` viene completato usando i default YAML e riscritto atomicamente quando possibile.
 - Il calendario malformato non blocca l'avvio: se non caricabile, il resolver tratta ogni momento come "nessun intervallo attivo" → caldaia spenta (comportamento sicuro, coerente con RF-10).
 
 ### 3.4 Autenticazione API-key (RF-38, RF-39)
@@ -250,10 +252,10 @@ record Calendario(Map<GiornoSettimana, List<IntervalloOrario>> giorni) { }
 // DTO JSON/API: le chiavi sono lunedi...domenica
 record CalendarioDocument(Map<String, List<IntervalloOrario>> giorni) { }
 
-// Intervallo (RF-04) — orari in UTC (RF-24)
+// Intervallo (RF-04) — orari nel fuso configurato (RF-24, RF-46)
 record IntervalloOrario(
-    LocalTime oraInizio,        // UTC
-    LocalTime oraFine,          // UTC
+    LocalTime oraInizio,        // ora civile locale
+    LocalTime oraFine,          // ora civile locale
     BigDecimal temperaturaTarget // scala 1
 ) { }
 ```
@@ -269,14 +271,19 @@ Implementa la sezione 8.2 delle specifiche:
 ```
 Optional<BigDecimal> risolviTarget(Instant ora, Config config, Calendario cal):
     se config.overrideAttivo -> return config.temperaturaOverride        # RF-07
-    utcNow = ora in UTC (LocalDateTime)                                  # RF-25
-    giorno = utcNow.getDayOfWeek()
+    zone = ZoneId.of(config.fusoOrario)
+    se config.oraLegale:
+        localNow = ora.atZone(zone).toLocalDateTime()                    # RF-25, RF-47
+    altrimenti:
+        standardOffset = zone.rules.getStandardOffset(ora)
+        localNow = LocalDateTime.ofInstant(ora, standardOffset)           # RF-47
+    giorno = localNow.getDayOfWeek()
     per ogni intervallo in cal.giorni(giorno):
-        se intervallo.contiene(utcNow.toLocalTime()) -> return target    # RF-03
+        se intervallo.contiene(localNow.toLocalTime()) -> return target   # RF-03
     return Optional.empty()   # nessun intervallo -> caldaia spenta      # RF-10
 ```
 
-> **Confronto UTC (RF-24, RF-25):** l'ora corrente è ottenuta come `Instant.now()` e convertita in `LocalDateTime` con `ZoneOffset.UTC`. Nessuna conversione a fuso locale, così da evitare ambiguità DST.
+> **Conversione locale (RF-24, RF-25, RF-46, RF-47):** l'ora corrente nasce come `Instant` dal `Clock` UTC, ma il resolver la converte con `ZoneId.of(config.fusoOrario())`. Con `oraLegale=true`, `ZoneRules` applica automaticamente CET/CEST e gestisce i passaggi di marzo e ottobre. Con `oraLegale=false`, viene usato l'offset standard del fuso.
 > **Semantica intervallo:** `oraInizio <= now < oraFine` (fine esclusa) per evitare sovrapposizioni ai bordi. La gestione di intervalli a cavallo di mezzanotte non è richiesta dalle specifiche (intervalli entro il giorno); se presente `oraFine <= oraInizio` viene rifiutato in validazione.
 
 ---
@@ -617,7 +624,7 @@ X-API-Key: <api-key-configurata>
 1. acquisisce l'istante corrente tramite `Clock` UTC;
 2. legge `SystemConfiguration` e il calendario correnti da `ConfigurationService`;
 3. legge `TemperatureReading` dal sensore tramite `TemperatureClient#leggiLettura`, ottenendo temperatura e umidità interne nella stessa chiamata;
-4. risolve `temperatura_target` tramite `TargetTemperatureResolver`: usa `temperatura_override` se l'override è attivo, altrimenti l'intervallo calendario UTC corrente;
+4. risolve `temperatura_target` tramite `TargetTemperatureResolver`: usa `temperatura_override` se l'override è attivo, altrimenti converte l'istante nel `fuso_orario` configurato applicando, se abilitata, l'ora legale;
 5. legge lo stato reale del relay tramite `RelayClient#leggiStato`;
 6. legge `WeatherReading` tramite `ExternalWeatherClient#leggiLettura`;
 7. mappa il modello interno `CurrentState` nel DTO `CurrentStateResponse`.
@@ -648,7 +655,7 @@ Le eccezioni dei client sensore, relay o meteo risalgono al layer REST e vengono
 | `GET` | `/config/calendario` | `ConfigController#getCalendario` | RF-33 | ritorna il calendario settimanale |
 | `PUT` | `/config/calendario` | `ConfigController#updateCalendario` | RF-33, RF-02 | valida 7 giorni + intervalli |
 
-Il payload del calendario usa un wrapper `giorni`, con esattamente le sette chiavi italiane canoniche:
+Il payload del calendario usa un wrapper `giorni`, con esattamente le sette chiavi italiane canoniche. I valori `ora_inizio` e `ora_fine` sono ore civili nel `fuso_orario` corrente, non timestamp UTC; il cambio CET/CEST è applicato dal resolver secondo `ora_legale`.
 
 ```json
 {
@@ -709,6 +716,8 @@ termostato:
   ntfy-url: https://ntfy.sh
   ntfy-topic: sliverd
   debug-mode: false
+  fuso-orario: Europe/Rome
+  ora-legale: true
   notifiche-errori-abilitate: true
   meteo-esterno-url: https://api.open-meteo.com
   meteo-esterno-latitudine: 37.6167
@@ -749,8 +758,9 @@ Il bean `DatabaseConfiguration` costruisce il `SQLiteDataSource` direttamente da
 
 | Livello | Oggetto | Strumenti |
 |---|---|---|
-| Unit | `TargetTemperatureResolver` (calendario/override, UTC, RF-07/RF-10/RF-24/RF-25) | JUnit 5 |
-| Unit | `CurrentStateService` (letture temperatura/umidità sensore, meteo esterno, relay, target override/calendario, target assente) | JUnit 5 + Mockito |
+| Unit | `TargetTemperatureResolver` (calendario locale, override, Europe/Rome, CET/CEST, ora ripetuta, RF-07/RF-10/RF-24/RF-25/RF-46/RF-47) | JUnit 5 |
+| Unit | `SystemConfiguration`/`ConfigurationService` (default Europe/Rome, migrazione JSON, fuso IANA invalido) | JUnit 5 + Mockito |
+| Unit | `CurrentStateService` (letture temperatura/umidità sensore, meteo esterno, relay, target override/calendario locale, target assente) | JUnit 5 + Mockito |
 | Unit | `ExternalWeatherClient` (path Open-Meteo, coordinate, parsing `current`, normalizzazione umidità, errori payload) | JUnit 5 + Mockito |
 | Unit | `calcolaDecisione` isteresi (RF-08/RF-09, zona neutra) | JUnit 5 (parametrizzati) |
 | Unit | `ErrorTrackingService` (soglia, reset, caso TURN_OFF RF-16/RF-17) | JUnit 5 |
@@ -763,6 +773,9 @@ Il bean `DatabaseConfiguration` costruisce il `SQLiteDataSource` direttamente da
 | End-to-end | Ciclo di polling completo con stub sensore/relay e client meteo (lettura interna completa, best-effort esterno, log e stato REST) | Test Mockito del `ThermostatControlService` + `scripts/e2e-mock.ps1` |
 
 Casi limite obbligatori da coprire:
+- Passaggio primaverile CET→CEST: un intervallo nell'ora locale saltata non viene attivato.
+- Passaggio autunnale CEST→CET: un intervallo nell'ora ripetuta è valutato in entrambe le occorrenze.
+- Fuso IANA invalido o configurazione legacy priva di `fuso_orario`/`ora_legale`.
 - Errore lettura Open-Meteo → controllo locale continuato, `READ_WEATHER`, misure esterne null nel polling log.
 - Sensore con temperatura e umidità mancanti o fuori dominio.
 - Avvio con lettura relay fallita (RF-22).
@@ -786,7 +799,7 @@ Casi limite obbligatori da coprire:
   ```
 - **Requisiti macchina di destinazione (RNF-05):** solo un **runtime Java 21** (JRE/JDK). Nessun server di database, nessun Docker. Il driver `sqlite-jdbc` include la libreria nativa SQLite per le principali architetture (x86-64, ARM64), quindi funziona anche su Raspberry Pi.
 - **Persistenza su disco:** il file SQLite (`database-path`) e i file JSON di config/calendario risiedono nella directory dati indicata in configurazione; vanno inclusi nei backup. All'avvio, se il file DB non esiste viene creato (RF-37).
-- **Avvio automatico (opzionale):** su Linux si può registrare un servizio `systemd` che lancia `java -jar`; su Windows un servizio tramite NSSM o Task Scheduler. Impostare `TZ=UTC` per coerenza dei log applicativi (la logica è comunque interamente in UTC).
+- **Avvio automatico (opzionale):** su Linux si può registrare un servizio `systemd` che lancia `java -jar`; su Windows un servizio tramite NSSM o Task Scheduler. I log applicativi e il database usano `Instant`/UTC; gli intervalli del calendario usano invece `fuso_orario` e le regole DST configurate.
 - **Health check:** endpoint `management/health` di Actuator.
 
 ---
@@ -809,7 +822,7 @@ Casi limite obbligatori da coprire:
 | RF-18, RF-19, RF-44 | Sez. 7.1 / 7.3 (`polling_log` e campi climatici) |
 | RF-20 | Sez. 7.2 (`error_log`) |
 | RF-22, RF-23 | Sez. 6.1 / 5.4 (stato dal relay, no RAM) |
-| RF-24, RF-25 | Sez. 4.2 (UTC) |
+| RF-24, RF-25, RF-46, RF-47 | Sez. 4.2 (`TargetTemperatureResolver`, `ZoneId`, regole DST) |
 | RF-26, RF-27 | Sez. 8 (retention scheduler) |
 | RF-28, RF-30 | Sez. 5.5 (ntfy, `debug_mode`) |
 | RF-31..RF-35 | Sez. 9.2..9.4 (API REST configurazione e log) |

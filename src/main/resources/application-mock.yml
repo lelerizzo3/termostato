@@ -29,6 +29,8 @@ termostato:
   ntfy-url: https://ntfy.sh
   ntfy-topic: sliverd
   debug-mode: false
+  fuso-orario: Europe/Rome
+  ora-legale: true
   api-keys:
     - e2e-test-key
 

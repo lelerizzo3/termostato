@@ -30,6 +30,8 @@ public class BootstrapProperties {
     private BigDecimal meteoEsternoLatitudine = SystemConfiguration.DEFAULT_METEO_ESTERNO_LATITUDINE;
     private BigDecimal meteoEsternoLongitudine = SystemConfiguration.DEFAULT_METEO_ESTERNO_LONGITUDINE;
     private boolean notificheErroriAbilitate = SystemConfiguration.DEFAULT_NOTIFICHE_ERRORI_ABILITATE;
+    private String fusoOrario = SystemConfiguration.DEFAULT_FUSO_ORARIO;
+    private boolean oraLegale = SystemConfiguration.DEFAULT_ORA_LEGALE;
     private int httpTimeoutMillis = 3000;
     private int schedulerTickMillis = 1000;
 
@@ -56,7 +58,9 @@ public class BootstrapProperties {
                 textOrDefault(meteoEsternoUrl, SystemConfiguration.DEFAULT_METEO_ESTERNO_URL),
                 meteoEsternoLatitudine,
                 meteoEsternoLongitudine,
-                notificheErroriAbilitate);
+                notificheErroriAbilitate,
+                fusoOrario,
+                oraLegale);
     }
 
     private static BigDecimal validTemperature(BigDecimal value, BigDecimal fallback) {
@@ -112,6 +116,10 @@ public class BootstrapProperties {
     public void setMeteoEsternoLongitudine(BigDecimal value) { this.meteoEsternoLongitudine = value; }
     public boolean isNotificheErroriAbilitate() { return notificheErroriAbilitate; }
     public void setNotificheErroriAbilitate(boolean value) { this.notificheErroriAbilitate = value; }
+    public String getFusoOrario() { return fusoOrario; }
+    public void setFusoOrario(String value) { this.fusoOrario = value; }
+    public boolean isOraLegale() { return oraLegale; }
+    public void setOraLegale(boolean value) { this.oraLegale = value; }
     public int getHttpTimeoutMillis() { return httpTimeoutMillis; }
     public void setHttpTimeoutMillis(int value) { this.httpTimeoutMillis = value; }
     public int getSchedulerTickMillis() { return schedulerTickMillis; }

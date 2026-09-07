@@ -44,7 +44,9 @@ class ThermostatControlServiceTest {
     @Mock PollingLogRepository pollingLogs;
     @Mock ErrorLogRepository errorLogs;
 
-    private final Clock clock = Clock.fixed(Instant.parse("2026-09-03T06:30:00Z"), ZoneOffset.UTC);
+    // 04:30Z corrisponde alle 06:30 civili di Europe/Rome (CEST, UTC+2) del 3 settembre 2026 (giovedì):
+    // rientra nell'intervallo GIOVEDI 06:00-08:00 del calendario di test dopo la conversione di fuso.
+    private final Clock clock = Clock.fixed(Instant.parse("2026-09-03T04:30:00Z"), ZoneOffset.UTC);
     private final ErrorTrackingService errors = new ErrorTrackingService();
     private final TargetTemperatureResolver resolver = new TargetTemperatureResolver();
     private final HeatingDecisionCalculator calculator = new HeatingDecisionCalculator();

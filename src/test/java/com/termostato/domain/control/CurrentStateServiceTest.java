@@ -40,7 +40,7 @@ class CurrentStateServiceTest {
     @Mock ExternalWeatherClient externalWeatherClient;
     @Mock RelayClient relayClient;
 
-    private final Clock clock = Clock.fixed(Instant.parse("2026-09-03T06:30:00Z"), ZoneOffset.UTC);
+    private final Clock clock = Clock.fixed(Instant.parse("2026-09-03T04:30:00Z"), ZoneOffset.UTC);
     private final TargetTemperatureResolver targetResolver = new TargetTemperatureResolver();
     private CurrentStateService service;
 
@@ -74,7 +74,7 @@ class CurrentStateServiceTest {
     }
 
     @Test
-    void risolveTargetDalCalendarioUtcQuandoOverrideDisattivo() {
+    void risolveTargetDalCalendarioLocaleQuandoOverrideDisattivo() {
         when(configuration.current()).thenReturn(config(false, null));
         when(configuration.currentCalendario()).thenReturn(calendarWithTarget());
         when(temperatureClient.leggiLettura()).thenReturn(new TemperatureReading(new BigDecimal("19.0"), new BigDecimal("50.0")));

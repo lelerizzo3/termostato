@@ -42,10 +42,12 @@ termostato:
   meteo-esterno-url: https://api.open-meteo.com
   meteo-esterno-latitudine: 37.6167
   meteo-esterno-longitudine: 15.1667
+  fuso-orario: Europe/Rome
+  ora-legale: true
   notifiche-errori-abilitate: true
 ```
 
-`notifiche-errori-abilitate` controlla esclusivamente l'invio degli errori tramite ntfy. Le notifiche informative di accensione/spegnimento restano controllate da `debug-mode`. Se Open-Meteo non è raggiungibile durante il polling, il controllo locale sensore/relay continua; il record di polling mantiene vuote le misure esterne e viene registrato un errore.
+Gli intervalli del calendario sono interpretati nell'orario civile del `fuso-orario` configurato. Il default `Europe/Rome` applica automaticamente le regole italiane CET/CEST tramite il database IANA; `ora-legale: true` abilita questo comportamento. Se impostato a `false`, il calendario viene interpretato usando l'offset standard del fuso senza il passaggio estivo. I timestamp dei log restano memorizzati in UTC per mantenere un riferimento assoluto. `notifiche-errori-abilitate` controlla esclusivamente l'invio degli errori tramite ntfy; le notifiche informative di accensione/spegnimento restano controllate da `debug-mode`. Se Open-Meteo non è raggiungibile durante il polling, il controllo locale sensore/relay continua; il record di polling mantiene vuote le misure esterne e viene registrato un errore.
 
 
 Tutti gli endpoint REST richiedono l'header `X-API-Key`. La lista è configurabile tramite `api_keys`/`api-keys`; una chiave assente o non valida restituisce HTTP 401. Il default è vuoto (fail-closed), quindi configurare almeno una chiave prima di usare le API:

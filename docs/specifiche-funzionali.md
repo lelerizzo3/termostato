@@ -24,7 +24,7 @@ Ogni intervallo specifica:
 - **ora di fine** — orario in cui l'intervallo termina
 - **temperatura target** — temperatura desiderata in gradi Celsius, con una cifra decimale (es. `20.5`)
 
-Gli orari degli intervalli sono espressi in **UTC**. Il sistema confronta l'ora corrente in UTC con gli intervalli del calendario, eliminando qualsiasi ambiguità legata al cambio ora legale/solare.
+Gli orari degli intervalli sono espressi nell'orario civile del `fuso_orario` configurato, con default `Europe/Rome`. Quando `ora_legale = true`, il sistema usa il database IANA per applicare automaticamente CET/CEST: non è necessario modificare il calendario nei giorni di cambio dell'ora. In primavera l'intervallo nell'ora locale saltata non viene attivato; in autunno un intervallo nell'ora ripetuta resta valido in entrambe le occorrenze. Quando `ora_legale = false`, viene usato l'offset standard del fuso senza il passaggio estivo.
 
 ### 2.4 Comportamento in assenza di intervalli
 
@@ -146,6 +146,17 @@ X-API-Key: <api-key>
 - La protezione si applica a tutti gli endpoint REST esposti dall'applicazione, inclusi gli endpoint Actuator e gli endpoint mock del profilo E2E.
 - `api_keys` è persistito nel file JSON di configurazione e può essere aggiornato tramite `PUT /config` dopo l'autenticazione con una chiave già autorizzata.
 - Le API-key del backend non vengono aggiunte alle chiamate outbound verso il servizio ntfy. Nel profilo mock vengono aggiunte solo alle chiamate interne verso i mock sensore/relay.
+
+### 3.9 Fuso orario del calendario (`fuso_orario`, `ora_legale`)
+
+| Parametro | Tipo | Default | Descrizione |
+|---|---|---|---|
+| `fuso_orario` | stringa IANA | `Europe/Rome` | Fuso civile usato per interpretare giorno e ora degli intervalli del calendario |
+| `ora_legale` | booleano | `true` | Se `true`, abilita le regole automatiche CET/CEST del fuso; se `false`, usa l'offset standard senza ora legale |
+
+Il fuso deve essere un identificatore valido del database IANA, per esempio `Europe/Rome`. La sorgente temporale interna resta un `Instant` assoluto; prima di cercare l'intervallo il sistema lo converte nel fuso configurato. Con `ora_legale = true`, il database TZDB determina automaticamente l'offset corretto per la data, compresi i passaggi primaverile e autunnale. Il flag non rappresenta una data da aggiornare manualmente a ogni cambio stagione: abilita l'applicazione automatica delle regole del fuso.
+
+I timestamp persistiti nei log e i parametri data di `GET /log` restano espressi in UTC; questa scelta non modifica l'interpretazione locale degli intervalli del calendario.
 
 ---
 
@@ -416,8 +427,8 @@ Lo stato corrente della caldaia utilizzato nella logica di isteresi (zona neutra
 | RF-18 | Ad ogni ciclo di polling il sistema scrive un record di log su database |
 | RF-19 | Il record di log contiene: `data_ora`, `caldaia_accesa`, `temperatura_rilevata`, `temperatura_target`, `override_attivo` e, se l'override è attivo, `temperatura_override` |
 | RF-20 | Il sistema mantiene una tabella separata per i log di errore, con i campi: `data_ora`, `tipo_errore`, `caldaia_accesa` (se disponibile), `temperatura_rilevata` (se disponibile), `num_errori_consecutivi` |
-| RF-24 | Gli orari degli intervalli del calendario sono espressi in UTC |
-| RF-25 | Il sistema confronta l'ora corrente in UTC con gli intervalli del calendario |
+| RF-24 | Gli orari degli intervalli del calendario sono espressi nel fuso `fuso_orario` configurato, con default `Europe/Rome` |
+| RF-25 | Il sistema converte l'istante corrente nel fuso del calendario e applica le regole dell'ora legale quando `ora_legale = true` |
 | RF-26 | La durata di conservazione dei log è configurabile tramite il parametro `retention_log_giorni` |
 | RF-27 | Un processo dedicato viene eseguito ogni ora e cancella i record di log più vecchi di `retention_log_giorni` giorni, sia dalla tabella dei log di polling che da quella dei log di errore |
 | RF-28 | Le notifiche vengono inviate tramite il servizio ntfy verso il topic configurato (`ntfy_topic`) |
@@ -438,6 +449,8 @@ Lo stato corrente della caldaia utilizzato nella logica di isteresi (zona neutra
 | RF-43 | `GET /stato` restituisce temperatura e umidità interne, temperatura target, stato relay e temperatura/umidità esterne |
 | RF-44 | Il log di polling memorizza temperatura e umidità interne e temperatura/umidità esterne; se il servizio esterno non è disponibile, i relativi valori sono null |
 | RF-45 | Il parametro `notifiche_errori_abilitate` abilita o disabilita l'invio delle notifiche di errore tramite ntfy senza modificare le notifiche informative controllate da `debug_mode` |
+| RF-46 | La configurazione espone `fuso_orario`, un identificatore IANA usato per interpretare giorno e ora degli intervalli del calendario; il default è `Europe/Rome` |
+| RF-47 | Quando `ora_legale = true`, il sistema applica automaticamente le regole DST del fuso configurato; quando è `false`, usa l'offset standard del fuso |
 
 ---
 

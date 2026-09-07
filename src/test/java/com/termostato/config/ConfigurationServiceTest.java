@@ -29,6 +29,9 @@ class ConfigurationServiceTest {
         assertTrue(Files.exists(Path.of(properties.getConfigFile())));
         assertTrue(Files.exists(Path.of(properties.getCalendarioFile())));
         assertTrue(first.currentCalendario().giorni().values().stream().allMatch(list -> list.isEmpty()));
+        assertEquals("Europe/Rome", first.current().fusoOrario());
+        assertTrue(first.current().oraLegale());
+
 
         SystemConfiguration updated = new SystemConfiguration(
                 new BigDecimal("0.2"), false, null, 30, 4, 7,
