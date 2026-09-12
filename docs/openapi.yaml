@@ -58,6 +58,7 @@ paths:
                 soglia_attivazione: 0.3
                 override_attivo: false
                 temperatura_override: null
+                override_fine: null
                 intervallo_polling_secondi: 60
                 max_errori_consecutivi: 3
                 retention_log_giorni: 30
@@ -90,6 +91,10 @@ paths:
         rispetto al valore usato all'avvio. La richiesta deve contenere una
         chiave attualmente autorizzata; non è possibile usare questa operazione
         per aggiungere la prima chiave quando `api_keys` è vuoto.
+
+        Se `override_attivo` è true e `override_fine` è valorizzato, deve essere
+        un istante futuro rispetto all'ora corrente (orario civile locale):
+        un valore già trascorso viene rifiutato con `400`.
       operationId: updateConfiguration
       requestBody:
         required: true
@@ -101,6 +106,7 @@ paths:
               soglia_attivazione: 0.3
               override_attivo: true
               temperatura_override: 20.5
+              override_fine: '2026-09-13T08:00:00'
               intervallo_polling_secondi: 60
               max_errori_consecutivi: 3
               retention_log_giorni: 30
@@ -635,6 +641,8 @@ components:
         devono avere una sola cifra decimale. `fuso_orario` è un identificatore
         IANA; `ora_legale` abilita le regole DST automatiche del fuso. Se
         `override_attivo` è true, `temperatura_override` è obbligatoria; se è false può essere null.
+        `override_fine` è opzionale e indica quando termina la forzatura: è un orario civile
+        locale (stesso fuso/DST del calendario) e, se presente su `PUT`, deve essere futuro.
       additionalProperties: false
       required:
         - soglia_attivazione
@@ -675,6 +683,17 @@ components:
           multipleOf: 0.1
           description: Target manuale in °C; obbligatorio quando `override_attivo` è true.
           example: 20.5
+        override_fine:
+          type: string
+          format: date-time
+          nullable: true
+          description: |
+            Istante di fine forzatura in orario civile locale (stesso `fuso_orario`/`ora_legale`
+            del calendario), formato ISO senza offset (es. `2026-09-13T08:00:00`). Opzionale e
+            rilevante solo con `override_attivo` true; se assente la forzatura è a tempo
+            indeterminato. Su `PUT` deve essere futuro, altrimenti la richiesta è rifiutata con 400.
+            Alla scadenza la forzatura si disattiva automaticamente e viene persistita.
+          example: '2026-09-13T08:00:00'
         intervallo_polling_secondi:
           type: integer
           format: int32

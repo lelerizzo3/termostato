@@ -22,12 +22,14 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneOffset;
 import java.util.EnumMap;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -85,6 +87,45 @@ class ThermostatControlServiceTest {
     }
 
     @Test
+    void forzaturaScadutaVieneDisattivataEPersistitaConNotifica() {
+        // overrideFine 06:00 locale (Europe/Rome, CEST) = 04:00Z, precedente a now (04:30Z): scaduta.
+        SystemConfiguration conForzaturaScaduta = configConOverride(new BigDecimal("22.0"),
+                LocalDateTime.of(2026, 9, 3, 6, 0));
+        when(configuration.current()).thenReturn(conForzaturaScaduta);
+        when(relayClient.leggiStato()).thenReturn(true);
+        when(temperatureClient.leggiLettura()).thenReturn(new TemperatureReading(new BigDecimal("20.3"), new BigDecimal("50.0")));
+
+        service.initializeRelayAtStartup();
+        service.executePollingCycle();
+
+        // La forzatura viene disattivata e persistita (config senza override).
+        verify(configuration).update(conForzaturaScaduta.senzaForzatura());
+        verify(notificationService).notificaInformazione(
+                "Forzatura terminata — ripristino della normale operatività basata sul calendario");
+        // Ripristinato il calendario: 06:30 locale rientra in 06:00-08:00 (target 20.5); 20.3 è zona neutra.
+        verify(relayClient, never()).inviaComando(any(Boolean.class));
+        verify(pollingLogs).save(any());
+    }
+
+    @Test
+    void forzaturaNonScadutaRestaAttivaSenzaPersistenza() {
+        // overrideFine 07:00 locale = 05:00Z, successiva a now (04:30Z): ancora valida.
+        SystemConfiguration conForzaturaValida = configConOverride(new BigDecimal("22.0"),
+                LocalDateTime.of(2026, 9, 3, 7, 0));
+        when(configuration.current()).thenReturn(conForzaturaValida);
+        when(relayClient.leggiStato()).thenReturn(false);
+        when(temperatureClient.leggiLettura()).thenReturn(new TemperatureReading(new BigDecimal("20.3"), new BigDecimal("50.0")));
+
+        service.initializeRelayAtStartup();
+        service.executePollingCycle();
+
+        // Nessuna disattivazione: override attivo con target 22.0 e temperatura 20.3 -> accensione.
+        verify(configuration, never()).update(any());
+        verify(relayClient).inviaComando(eq(true));
+        verify(pollingLogs).save(any());
+    }
+
+    @Test
     void assenzaTargetInviaSpegnimentoSeRelayAcceso() {
         when(configuration.currentCalendario()).thenReturn(Calendario.vuoto());
         when(relayClient.leggiStato()).thenReturn(true, true);
@@ -108,5 +149,16 @@ class ThermostatControlServiceTest {
 
         verify(relayClient).inviaComando(false);
         verify(errorLogs, org.mockito.Mockito.times(2)).save(any());
+    }
+
+    private SystemConfiguration configConOverride(BigDecimal temperaturaOverride, LocalDateTime overrideFine) {
+        return new SystemConfiguration(
+                new BigDecimal("0.3"), true, temperaturaOverride, 60, 2, 30,
+                "http://ntfy", "topic", false, "http://sensor", "http://relay", "./data/test.db",
+                List.of(), SystemConfiguration.DEFAULT_METEO_ESTERNO_URL,
+                SystemConfiguration.DEFAULT_METEO_ESTERNO_LATITUDINE,
+                SystemConfiguration.DEFAULT_METEO_ESTERNO_LONGITUDINE,
+                true, SystemConfiguration.DEFAULT_FUSO_ORARIO, SystemConfiguration.DEFAULT_ORA_LEGALE,
+                overrideFine);
     }
 }

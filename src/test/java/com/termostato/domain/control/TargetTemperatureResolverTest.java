@@ -123,6 +123,6 @@ class TargetTemperatureResolverTest {
                 SystemConfiguration.DEFAULT_METEO_ESTERNO_URL,
                 SystemConfiguration.DEFAULT_METEO_ESTERNO_LATITUDINE,
                 SystemConfiguration.DEFAULT_METEO_ESTERNO_LONGITUDINE,
-                true, fusoOrario, oraLegale);
+                true, fusoOrario, oraLegale, null);
     }
 }

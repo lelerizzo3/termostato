@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDateTime;
 
 @ConfigurationProperties(prefix = "termostato")
 public class BootstrapProperties {
@@ -14,6 +15,7 @@ public class BootstrapProperties {
     private BigDecimal sogliaAttivazione = new BigDecimal("0.3");
     private boolean overrideAttivo;
     private BigDecimal temperaturaOverride;
+    private LocalDateTime overrideFine;
     private int intervalloPollingSecondi = 60;
     private int maxErroriConsecutivi = 3;
     private int retentionLogGiorni = 30;
@@ -60,7 +62,8 @@ public class BootstrapProperties {
                 meteoEsternoLongitudine,
                 notificheErroriAbilitate,
                 fusoOrario,
-                oraLegale);
+                oraLegale,
+                effectiveOverride ? overrideFine : null);
     }
 
     private static BigDecimal validTemperature(BigDecimal value, BigDecimal fallback) {
@@ -84,6 +87,8 @@ public class BootstrapProperties {
     public void setOverrideAttivo(boolean value) { this.overrideAttivo = value; }
     public BigDecimal getTemperaturaOverride() { return temperaturaOverride; }
     public void setTemperaturaOverride(BigDecimal value) { this.temperaturaOverride = value; }
+    public LocalDateTime getOverrideFine() { return overrideFine; }
+    public void setOverrideFine(LocalDateTime value) { this.overrideFine = value; }
     public int getIntervalloPollingSecondi() { return intervalloPollingSecondi; }
     public void setIntervalloPollingSecondi(int value) { this.intervalloPollingSecondi = value; }
     public int getMaxErroriConsecutivi() { return maxErroriConsecutivi; }

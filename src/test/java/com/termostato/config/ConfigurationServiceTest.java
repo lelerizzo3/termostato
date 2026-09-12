@@ -9,6 +9,7 @@ import tools.jackson.databind.json.JsonMapper;
 import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.LocalDateTime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -43,6 +44,42 @@ class ConfigurationServiceTest {
         second.afterPropertiesSet();
         assertEquals(updated, second.current());
         assertFalse(second.current().overrideAttivo());
+    }
+
+    @Test
+    void persisteERicaricaOverrideFineComeOrarioLocale() throws Exception {
+        BootstrapProperties properties = properties();
+        JsonMapper mapper = JsonMapper.builder().build();
+
+        ConfigurationService first = new ConfigurationService(properties, mapper);
+        first.afterPropertiesSet();
+
+        LocalDateTime fine = LocalDateTime.of(2026, 9, 13, 8, 0);
+        salvaConfigConOverride(first, properties, fine);
+
+        // Il JSON deve contenere override_fine in formato ISO locale senza offset.
+        String rawJson = Files.readString(Path.of(properties.getConfigFile()));
+        assertTrue(rawJson.contains("2026-09-13T08:00"), "override_fine serializzato ISO locale: " + rawJson);
+
+        ConfigurationService second = new ConfigurationService(properties, mapper);
+        second.afterPropertiesSet();
+        assertTrue(second.current().overrideAttivo());
+        assertEquals(fine, second.current().overrideFine());
+    }
+
+    private void salvaConfigConOverride(ConfigurationService service,
+                                        BootstrapProperties properties,
+                                        LocalDateTime fine) {
+        SystemConfiguration conOverride = new SystemConfiguration(
+                new BigDecimal("0.3"), true, new BigDecimal("21.0"), 60, 3, 30,
+                "https://ntfy.sh", "topic", false, "http://sensor", "http://relay",
+                properties.getDatabasePath(), java.util.List.of(),
+                SystemConfiguration.DEFAULT_METEO_ESTERNO_URL,
+                SystemConfiguration.DEFAULT_METEO_ESTERNO_LATITUDINE,
+                SystemConfiguration.DEFAULT_METEO_ESTERNO_LONGITUDINE,
+                true, SystemConfiguration.DEFAULT_FUSO_ORARIO, SystemConfiguration.DEFAULT_ORA_LEGALE,
+                fine);
+        service.update(conOverride);
     }
 
     private BootstrapProperties properties() {

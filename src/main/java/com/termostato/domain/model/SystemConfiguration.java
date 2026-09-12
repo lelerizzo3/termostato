@@ -2,6 +2,7 @@ package com.termostato.domain.model;
 
 import java.math.BigDecimal;
 import java.time.DateTimeException;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Objects;
@@ -25,7 +26,8 @@ public record SystemConfiguration(
         BigDecimal meteoEsternoLongitudine,
         boolean notificheErroriAbilitate,
         String fusoOrario,
-        boolean oraLegale) {
+        boolean oraLegale,
+        LocalDateTime overrideFine) {
 
     public static final String DEFAULT_METEO_ESTERNO_URL = "https://api.open-meteo.com";
     public static final BigDecimal DEFAULT_METEO_ESTERNO_LATITUDINE = new BigDecimal("37.6167");
@@ -40,6 +42,13 @@ public record SystemConfiguration(
             temperaturaOverride = TemperatureRules.requireOneDecimal("temperaturaOverride", temperaturaOverride, false);
         } else if (temperaturaOverride != null) {
             temperaturaOverride = TemperatureRules.requireOneDecimal("temperaturaOverride", temperaturaOverride, true);
+        }
+        // overrideFine è rilevante solo con forzatura attiva: senza override viene azzerato,
+        // coerentemente con temperaturaOverride. La validazione "deve essere futuro" vive nel
+        // percorso di update (PUT /config), non qui, per non impedire il ricaricamento al boot
+        // di una configurazione la cui forzatura è nel frattempo scaduta.
+        if (!overrideAttivo) {
+            overrideFine = null;
         }
         if (intervalloPollingSecondi <= 0) {
             throw new IllegalArgumentException("intervalloPollingSecondi deve essere positivo");
@@ -64,6 +73,20 @@ public record SystemConfiguration(
         fusoOrario = validZoneId(fusoOrario);
     }
 
+    /**
+     * Restituisce una copia della configurazione con la forzatura disattivata: {@code overrideAttivo=false},
+     * {@code temperaturaOverride} e {@code overrideFine} azzerati. Usata per l'auto-disattivazione persistita
+     * alla scadenza di {@code overrideFine}.
+     */
+    public SystemConfiguration senzaForzatura() {
+        return new SystemConfiguration(
+                sogliaAttivazione, false, null, intervalloPollingSecondi,
+                maxErroriConsecutivi, retentionLogGiorni, ntfyUrl, ntfyTopic, debugMode,
+                sensoreUrl, relayUrl, databasePath, apiKeys, meteoEsternoUrl,
+                meteoEsternoLatitudine, meteoEsternoLongitudine, notificheErroriAbilitate,
+                fusoOrario, oraLegale, null);
+    }
+
     /** Compatibilità con il costruttore completo precedente all'aggiunta di timezone/DST. */
     public SystemConfiguration(BigDecimal sogliaAttivazione,
                                boolean overrideAttivo,
@@ -86,7 +109,7 @@ public record SystemConfiguration(
                 maxErroriConsecutivi, retentionLogGiorni, ntfyUrl, ntfyTopic, debugMode,
                 sensoreUrl, relayUrl, databasePath, apiKeys, meteoEsternoUrl,
                 meteoEsternoLatitudine, meteoEsternoLongitudine, notificheErroriAbilitate,
-                DEFAULT_FUSO_ORARIO, DEFAULT_ORA_LEGALE);
+                DEFAULT_FUSO_ORARIO, DEFAULT_ORA_LEGALE, null);
     }
 
     /** Compatibilità con i costruttori usati dal dominio/test con API-key configurate. */
@@ -108,7 +131,7 @@ public record SystemConfiguration(
                 sensoreUrl, relayUrl, databasePath, apiKeys,
                 DEFAULT_METEO_ESTERNO_URL, DEFAULT_METEO_ESTERNO_LATITUDINE,
                 DEFAULT_METEO_ESTERNO_LONGITUDINE, DEFAULT_NOTIFICHE_ERRORI_ABILITATE,
-                DEFAULT_FUSO_ORARIO, DEFAULT_ORA_LEGALE);
+                DEFAULT_FUSO_ORARIO, DEFAULT_ORA_LEGALE, null);
     }
 
     /** Compatibilità con i costruttori usati dal dominio/test senza autenticazione configurata. */
@@ -129,7 +152,7 @@ public record SystemConfiguration(
                 sensoreUrl, relayUrl, databasePath, List.of(),
                 DEFAULT_METEO_ESTERNO_URL, DEFAULT_METEO_ESTERNO_LATITUDINE,
                 DEFAULT_METEO_ESTERNO_LONGITUDINE, DEFAULT_NOTIFICHE_ERRORI_ABILITATE,
-                DEFAULT_FUSO_ORARIO, DEFAULT_ORA_LEGALE);
+                DEFAULT_FUSO_ORARIO, DEFAULT_ORA_LEGALE, null);
     }
 
     private static List<String> normalizeApiKeys(List<String> values) {

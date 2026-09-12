@@ -99,6 +99,7 @@ public class ThermostatControlService {
 
         Instant now = clock.instant();
         SystemConfiguration currentConfiguration = configuration.current();
+        currentConfiguration = disattivaForzaturaSeScaduta(now, currentConfiguration);
 
         if (spegnimentoPendente.get() && !tryPendingTurnOff(now, currentConfiguration)) {
             return;
@@ -173,8 +174,34 @@ public class ThermostatControlService {
         errorTracking.resetAll();
     }
 
-    private boolean tryPendingTurnOff(Instant now, SystemConfiguration currentConfiguration) {
+    /**
+     * Auto-disattivazione persistita della forzatura: se la forzatura è attiva e {@code overrideFine}
+     * (orario civile locale) è stato raggiunto o superato ({@code now >= overrideFine}), disattiva la
+     * forzatura, persiste la configurazione e invia una notifica informativa. La scrittura avviene una
+     * sola volta alla transizione, poiché la configurazione persistita non ha più {@code overrideAttivo}.
+     */
+    private SystemConfiguration disattivaForzaturaSeScaduta(Instant now, SystemConfiguration currentConfiguration) {
+        if (!currentConfiguration.overrideAttivo() || currentConfiguration.overrideFine() == null) {
+            return currentConfiguration;
+        }
+        Instant fine = ZoneResolver.toInstant(currentConfiguration.overrideFine(), currentConfiguration);
+        if (now.isBefore(fine)) {
+            return currentConfiguration;
+        }
+        SystemConfiguration ripristinata = currentConfiguration.senzaForzatura();
         try {
+            configuration.update(ripristinata);
+        } catch (RuntimeException exception) {
+            // Se la persistenza fallisce si riprova al ciclo successivo: nel frattempo si mantiene lo stato attuale.
+            log.warn("Impossibile persistere la disattivazione della forzatura scaduta", exception);
+            return currentConfiguration;
+        }
+        notificationService.notificaInformazione(
+                "Forzatura terminata — ripristino della normale operatività basata sul calendario");
+        return ripristinata;
+    }
+
+    private boolean tryPendingTurnOff(Instant now, SystemConfiguration currentConfiguration) {        try {
             relayClient.inviaComando(false);
             spegnimentoPendente.set(false);
             notificationService.notificaInformazione("Caldaia spenta — retry del comando pendente");

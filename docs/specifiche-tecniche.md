@@ -169,6 +169,7 @@ Mappa i parametri della sezione 3 delle specifiche funzionali. Legato con `@Conf
 | `sogliaAttivazione` | `BigDecimal` | RF-05, RF-08, RF-09 | `0.3` | `@DecimalMin("0.0")` |
 | `overrideAttivo` | `boolean` | RF-06, RF-07 | `false` | — |
 | `temperaturaOverride` | `BigDecimal` | RF-06 | `null` | obbligatorio se `overrideAttivo=true` |
+| `overrideFine` | `LocalDateTime` | RF-48 | `null` | opzionale; orario civile locale (fuso/DST come calendario); rilevante solo se `overrideAttivo=true`; su `PUT` deve essere futuro (400 altrimenti) |
 | `intervalloPollingSecondi` | `int` | RF-11 | `60` | `@Positive`; fallback a 60 se non valido |
 | `maxErroriConsecutivi` | `int` | RF-16 | `3` | `@Positive` |
 | `retentionLogGiorni` | `int` | RF-26 | `30` | `@Positive` |
@@ -271,20 +272,41 @@ Implementa la sezione 8.2 delle specifiche:
 ```
 Optional<BigDecimal> risolviTarget(Instant ora, Config config, Calendario cal):
     se config.overrideAttivo -> return config.temperaturaOverride        # RF-07
-    zone = ZoneId.of(config.fusoOrario)
-    se config.oraLegale:
-        localNow = ora.atZone(zone).toLocalDateTime()                    # RF-25, RF-47
-    altrimenti:
-        standardOffset = zone.rules.getStandardOffset(ora)
-        localNow = LocalDateTime.ofInstant(ora, standardOffset)           # RF-47
+    localNow = ZoneResolver.toLocal(ora, config)                         # RF-25, RF-47 (fuso/DST centralizzati)
     giorno = localNow.getDayOfWeek()
     per ogni intervallo in cal.giorni(giorno):
         se intervallo.contiene(localNow.toLocalTime()) -> return target   # RF-03
     return Optional.empty()   # nessun intervallo -> caldaia spenta      # RF-10
 ```
 
-> **Conversione locale (RF-24, RF-25, RF-46, RF-47):** l'ora corrente nasce come `Instant` dal `Clock` UTC, ma il resolver la converte con `ZoneId.of(config.fusoOrario())`. Con `oraLegale=true`, `ZoneRules` applica automaticamente CET/CEST e gestisce i passaggi di marzo e ottobre. Con `oraLegale=false`, viene usato l'offset standard del fuso.
+> **Conversione locale (RF-24, RF-25, RF-46, RF-47):** l'ora corrente nasce come `Instant` dal `Clock` UTC, ma il resolver la converte con `ZoneId.of(config.fusoOrario())`. Con `oraLegale=true`, `ZoneRules` applica automaticamente CET/CEST e gestisce i passaggi di marzo e ottobre. Con `oraLegale=false`, viene usato l'offset standard del fuso. La conversione è centralizzata in `ZoneResolver` (`toLocal`/`toInstant`), riusata sia dal resolver sia dalla valutazione di `overrideFine`.
 > **Semantica intervallo:** `oraInizio <= now < oraFine` (fine esclusa) per evitare sovrapposizioni ai bordi. La gestione di intervalli a cavallo di mezzanotte non è richiesta dalle specifiche (intervalli entro il giorno); se presente `oraFine <= oraInizio` viene rifiutato in validazione.
+
+### 4.2.1 Fine forzatura e auto-disattivazione (`overrideFine`, RF-48)
+
+Il campo opzionale `overrideFine` (`LocalDateTime`, orario civile locale) definisce quando la forzatura termina. La valutazione avviene nel `ThermostatControlService`, non nel resolver (che resta puro e deterministico):
+
+```
+executePollingCycle():
+    now = clock.instant()
+    config = configuration.current()
+    config = disattivaForzaturaSeScaduta(now, config)   # RF-48
+    ...
+
+disattivaForzaturaSeScaduta(now, config):
+    se non config.overrideAttivo oppure config.overrideFine == null -> return config
+    fine = ZoneResolver.toInstant(config.overrideFine, config)   # fuso/DST come calendario
+    se now.isBefore(fine) -> return config                       # non ancora scaduta
+    ripristinata = config.senzaForzatura()                       # overrideAttivo=false, temperaturaOverride/overrideFine azzerati
+    configuration.update(ripristinata)                           # persistenza atomica (scrittura una-tantum)
+    notificationService.notificaInformazione("Forzatura terminata ...")
+    return ripristinata
+```
+
+- **Scadenza:** `!now.isBefore(fine)` (cioè `now >= fine`), coerente con la semantica di fine-intervallo esclusiva del calendario.
+- **Persistenza:** riusa `ConfigurationService.update` (scrittura atomica); avviene una sola volta alla transizione, perché la configurazione persistita non ha più `overrideAttivo`. Così `GET /config` diventa la conferma osservabile del ripristino.
+- **Validazione (`PUT /config`):** se `overrideAttivo=true` e `overrideFine` è presente ma non futuro (`fine <= now`), `ConfigController` solleva `IllegalArgumentException` → HTTP `400` (via `RestExceptionHandler`). La regola vive nel percorso di update e **non** nell'invariante del record `SystemConfiguration`, così il ricaricamento al boot di una forzatura scaduta tra due avvii non fallisce: al primo ciclo scatta semplicemente l'auto-disattivazione.
+- **Normalizzazione record:** con `overrideAttivo=false`, `overrideFine` viene azzerato dal compact constructor, coerentemente con `temperaturaOverride`.
 
 ---
 

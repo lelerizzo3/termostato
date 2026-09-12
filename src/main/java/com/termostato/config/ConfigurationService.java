@@ -139,7 +139,8 @@ public class ConfigurationService implements InitializingBean {
                         loaded.ntfyUrl(), loaded.ntfyTopic(), loaded.debugMode(), loaded.sensoreUrl(),
                         loaded.relayUrl(), defaults.databasePath(), effectiveApiKeys,
                         effectiveMeteoUrl, effectiveMeteoLatitudine, effectiveMeteoLongitudine,
-                        effectiveNotificheErrori, effectiveFusoOrario, effectiveOraLegale);
+                        effectiveNotificheErrori, effectiveFusoOrario, effectiveOraLegale,
+                        loaded.overrideFine());
                 if (newConfigurationFieldsMissing) {
                     try {
                         writeJson(path, loaded);
