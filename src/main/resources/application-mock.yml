@@ -37,3 +37,6 @@ termostato:
   config-file: ./data/mock-config.json
   calendario-file: ./data/mock-calendario.json
   database-path: ./data/mock-termostato.db
+  shelly-file: ./data/mock-shelly.json
+  intervallo-polling-consumi-secondi: 30
+  retention-consumi-giorni: 90

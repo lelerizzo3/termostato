@@ -151,6 +151,40 @@ class ThermostatControlServiceTest {
         verify(errorLogs, org.mockito.Mockito.times(2)).save(any());
     }
 
+    @Test
+    void erroreMeteoNonNotificaNtfyMaLoggaInErrorLog() {
+        // Il meteo esterno non è raggiungibile: deve essere loggato in error_log
+        // ma NON inviare notifica ntfy (servizio terzo non critico).
+        when(relayClient.leggiStato()).thenReturn(false);
+        when(temperatureClient.leggiLettura()).thenReturn(new TemperatureReading(new BigDecimal("19.0"), new BigDecimal("50.0")));
+        when(externalWeatherClient.leggiLettura()).thenThrow(new RuntimeException("timeout meteo"));
+
+        service.initializeRelayAtStartup();
+        service.executePollingCycle();
+
+        // Errore loggato in error_log
+        verify(errorLogs).save(any());
+        // Nessuna notifica ntfy per l'errore meteo
+        verify(notificationService, never()).notificaErrore(any());
+        // Il ciclo continua normalmente: log di polling salvato
+        verify(pollingLogs).save(any());
+    }
+
+    @Test
+    void erroreMeteoNonInterrompeLaContinuazioneCiclo() {
+        // Con errore meteo il controllo locale sensore/relay deve proseguire normalmente.
+        when(relayClient.leggiStato()).thenReturn(false);
+        when(temperatureClient.leggiLettura()).thenReturn(new TemperatureReading(new BigDecimal("19.0"), new BigDecimal("50.0")));
+        when(externalWeatherClient.leggiLettura()).thenThrow(new RuntimeException("timeout meteo"));
+
+        service.initializeRelayAtStartup();
+        service.executePollingCycle();
+
+        // Temperatura 19.0 < target 20.5 (meno soglia 0.3 = 20.2) → accensione
+        verify(relayClient).inviaComando(true);
+        verify(pollingLogs).save(any());
+    }
+
     private SystemConfiguration configConOverride(BigDecimal temperaturaOverride, LocalDateTime overrideFine) {
         return new SystemConfiguration(
                 new BigDecimal("0.3"), true, temperaturaOverride, 60, 2, 30,

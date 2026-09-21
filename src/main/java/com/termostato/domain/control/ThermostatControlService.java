@@ -223,7 +223,11 @@ public class ThermostatControlService {
         int consecutiveErrors = errorTracking.increment(category);
         saveErrorLog(new ErrorLogRecord(null, occurredAt, message, boilerState,
                 roomTemperature, consecutiveErrors));
-        notificationService.notificaErrore(message);
+        // Gli errori di lettura meteo esterno (servizio terzo) vengono loggati
+        // ma non notificati via ntfy per evitare rumore su servizi non critici.
+        if (category != ErrorCategory.READ_WEATHER) {
+            notificationService.notificaErrore(message);
+        }
 
         if (applySafetyThreshold && category != ErrorCategory.TURN_OFF
                 && consecutiveErrors >= currentConfiguration.maxErroriConsecutivi()) {

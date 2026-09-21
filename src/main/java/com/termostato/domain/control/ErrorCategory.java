@@ -5,5 +5,6 @@ public enum ErrorCategory {
     READ_WEATHER,
     READ_RELAY,
     TURN_ON,
-    TURN_OFF
+    TURN_OFF,
+    SHELLY_PM
 }

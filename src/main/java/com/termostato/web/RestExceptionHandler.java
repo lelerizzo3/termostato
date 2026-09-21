@@ -13,6 +13,7 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.time.Clock;
 import java.time.Instant;
+import java.util.NoSuchElementException;
 import java.util.stream.Collectors;
 
 @RestControllerAdvice
@@ -43,6 +44,11 @@ public class RestExceptionHandler {
     @ExceptionHandler(ConfigurationPersistenceException.class)
     public ResponseEntity<ApiError> persistenceFailure(ConfigurationPersistenceException exception) {
         return response(HttpStatus.INTERNAL_SERVER_ERROR, exception.getMessage());
+    }
+
+    @ExceptionHandler(NoSuchElementException.class)
+    public ResponseEntity<ApiError> notFoundElement(NoSuchElementException exception) {
+        return response(HttpStatus.NOT_FOUND, exception.getMessage());
     }
 
     @ExceptionHandler(NoResourceFoundException.class)

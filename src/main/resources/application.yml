@@ -38,6 +38,9 @@ termostato:
   api-keys: []
   http-timeout-millis: 3000
   scheduler-tick-millis: 1000
+  shelly-file: ./data/shelly.json
+  intervallo-polling-consumi-secondi: 30
+  retention-consumi-giorni: 90
 
 management:
   endpoints:

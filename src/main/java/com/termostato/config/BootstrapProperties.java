@@ -36,6 +36,9 @@ public class BootstrapProperties {
     private boolean oraLegale = SystemConfiguration.DEFAULT_ORA_LEGALE;
     private int httpTimeoutMillis = 3000;
     private int schedulerTickMillis = 1000;
+    private String shellyFile = "./data/shelly.json";
+    private int intervalloPollingConsumiSecondi = 30;
+    private int retentionConsumiGiorni = 90;
 
     public SystemConfiguration defaults() {
         BigDecimal threshold = validTemperature(sogliaAttivazione, new BigDecimal("0.3"));
@@ -129,6 +132,12 @@ public class BootstrapProperties {
     public void setHttpTimeoutMillis(int value) { this.httpTimeoutMillis = value; }
     public int getSchedulerTickMillis() { return schedulerTickMillis; }
     public void setSchedulerTickMillis(int value) { this.schedulerTickMillis = value; }
+    public String getShellyFile() { return shellyFile; }
+    public void setShellyFile(String value) { this.shellyFile = value; }
+    public int getIntervalloPollingConsumiSecondi() { return intervalloPollingConsumiSecondi; }
+    public void setIntervalloPollingConsumiSecondi(int value) { this.intervalloPollingConsumiSecondi = value; }
+    public int getRetentionConsumiGiorni() { return retentionConsumiGiorni; }
+    public void setRetentionConsumiGiorni(int value) { this.retentionConsumiGiorni = value; }
 
     public static class EndpointProperties {
         private String url;
